@@ -1,2 +1,235 @@
-# Central-de-Realtime
-Sistema facilitador de RealTime
+# Central do RTA — Documentação
+Visão geral
+A Central do RTA (CentralRTA v1.0.0) é um app desktop em Tkinter que padroniza duas rotinas do WFM Real Time: alocar os downloads do dia na pasta ou planilha certa de cada operação e verificar e-mails (pontuais e parciais) seguindo um checklist, com registro em histórico.
+É usado pelos analistas de RTA, roda como script .py, notebook ou .exe, e guarda os dados de cada usuário numa pasta própria na rede. Nada é movido ou colado sem confirmação explícita (checkbox + caixa de diálogo).
+Alocar arquivo
+1.	Escolher a operação na barra lateral.
+2.	Escolher a base (pasta ou planilha de destino).
+3.	Escolher o arquivo de destino (nome final).
+4.	Escolher o arquivo de origem em Downloads (ou usar o clipboard, no Cardif).
+5.	Revisar o resumo e os avisos, marcar "Revisei a origem e o destino".
+6.	Clicar em Executar alocação e confirmar a caixa de diálogo.
+Verificar e-mail
+1.	Escolher a verificação da operação.
+2.	Completar o checklist (o botão de registro só libera com 100%).
+3.	Nas justificativas Cardif: preencher o gerador ou validar pelo Outlook, copiar ou enviar.
+4.	Adicionar observações (opcional) e escolher o resultado: OK, Com ressalva ou Problema.
+5.	Clicar em Registrar verificação.
+Requisitos e instalação
+O app exige Windows, Python 3 com tcl/tk e acesso à rede \\10.205.2.10\wfm. Ao rodar como script, a Célula -1 verifica e instala sozinha o que faltar.
+Biblioteca	Pacote pip	Uso	Obrigatória
+openpyxl	openpyxl	Ler e escrever planilhas	Sim
+pandas + lxml	pandas, lxml	Ler as tabelas HTML do pontual (Outlook)	Sim
+curl_cffi	curl_cffi	Requests autenticadas (Botmaker)	Sim
+bs4	beautifulsoup4	Parsing de HTML	Sim
+playwright + Chromium	playwright	Autenticação SSO via navegador	Sim
+win32com	pywin32	Ler e responder e-mails no Outlook	Não (sem ela, os botões de Outlook ficam desativados)
+tkinter	— (vem com o Python)	Interface	Sim
+Como a verificação automática funciona
+•	AUTO_INSTALAR = True: instala os pacotes ausentes com pip e baixa o Chromium do Playwright.
+•	Em script .py, o programa se reabre uma vez sozinho (variável RTA_REINICIADO evita loop).
+•	Em notebook, a execução para e pede para reiniciar o kernel.
+•	AUTO_INSTALAR = False: só mostra o comando pip e encerra.
+•	Se faltar tkinter, é preciso reinstalar o Python marcando "tcl/tk and IDLE".
+•	No .exe (FROZEN = True) a verificação não roda: as bibliotecas já vão empacotadas.
+Comando manual, se a instalação automática falhar por proxy ou permissão:
+python -m pip install openpyxl curl_cffi beautifulsoup4 pandas lxml playwright pywin32
+python -m playwright install chromium
+Estrutura de pastas e configuração
+Cada usuário tem uma pasta própria em Users_RTA\<login do Windows>, criada no primeiro acesso. Os downloads são lidos sempre da pasta Downloads do usuário logado.
+\\10.205.2.10\wfm\@WFM\Central RTA\
+├── CentralRTA.exe  (ou o .py)
+├── config.json      (opcional)
+└── Users_RTA\
+    └── <usuario>\
+        ├── historico_alocacao.json
+        ├── app.log
+        ├── botmaker_sessao.json
+        ├── botmaker_sessao_ls.json
+        └── botmaker_refresh_token.txt
+Onde fica a raiz (pasta que contém Users_RTA), em ordem de prioridade
+1.	Variável de ambiente RTA_RAIZ.
+2.	Chave raiz_dados do config.json ao lado do programa.
+3.	No .exe: a pasta de rede padrão \\10.205.2.10\wfm\@WFM\Central RTA.
+4.	No .py: a pasta do próprio script.
+Se a rede estiver indisponível, o app usa C:\Users\<usuario>\.central_rta\<usuario> como contingência e avisa no log.
+Nome do usuário: vem de getpass.getuser(), em minúsculas, com espaços e caracteres inválidos trocados por _.
+Downloads: C:\Users\<usuario>\Downloads; se não existir, tenta OneDrive\Downloads.
+config.json (opcional):
+{
+  "raiz_dados": "\\\\10.205.2.10\\wfm\\@WFM\\Central RTA",
+  "atalhos": {}
+}
+A chave atalhos é aceita pela leitura, mas o código atual ainda usa o dicionário ATALHOS fixo no script.
+Log: tudo vai para app.log na pasta do usuário. No .exe, os print() também são redirecionados para o log.
+Histórico: historico_alocacao.json guarda os 200 registros mais recentes, do mais novo para o mais antigo. Campos de cada registro:
+Campo	Conteúdo
+data	DD/MM/AAAA HH:MM:SS
+tipo	alocar ou verificar_email
+operacao	Nome da operação
+descricao	Arquivo → base, ou nome da verificação
+arquivo_origem, arquivo_destino, caminho_destino	Só em alocações
+resultado, observacoes	Só em verificações (ok, ressalva, erro)
+status	Sucesso, Problema: <motivo> ou Verificado — OK / Com ressalva / Problema
+Operações configuradas
+São 9 operações: 7 com alocação ativa, 3 com verificações de e-mail (Epson, Cardif e Lexmark), CitiBank em criação e Coty ainda sem processo. Nos caminhos abaixo, <WFM> = \\10.205.2.10\wfm\@WFM.
+Operação	Sistema · horário	Base	Arquivo / destino	Tipo
+Epson	CMS / Botmaker · 08:00–20:12	AGENT	operatorsSessionsDebug.tsv e users.tsv em <WFM>\01. Operações\Epson\6. Real Time\Whatsapp\Bases\AGENT	Mover
+Epson		BOT	users.tsv em ...\Whatsapp\Bases\BOT	Mover
+Cardif	CMS / OLOS · 08:00–22:00	Parcial de Logados	WhatsApp Cardif.xlsx, aba Base CMS, a partir de A2, máx. 6 colunas	Colar clipboard
+Lexmark	Genesys · 06:00–20:00	Intraday BRAZIL_PT_BAU	AAAA-MM-DD Detalhe do desempenho da fila.csv em <WFM>\3. Reports\...\Lexmark\Genesys\Bases\Intraday\BRAZIL_PT_BAU\<ano>\<MM - Mês>	Mover
+Plurix	CMS / HI Platform · 08:00–20:00	Bases (Upload)	BuscaAtendimentos.csv em <WFM>\3. Reports\...\Plurix\Bases (substitui)	Mover
+Plurix		Retroativo	DD.MM BuscaAtendimentos.csv em ...\Plurix\Retroativo\<Mês> (acumula)	Mover
+Accor	CMS / Amazon · 08:00–20:00	Bases (Upload)	Real_Time_CARE.csv em <WFM>\01. Operações\Accor\6. Real Time	Mover
+CitiBank	CMS / Amazon · 08:00–20:00	Bases (Upload)	Ainda em criação (destino é um texto provisório)	—
+BlueLink	Odigo / Sales · 04:00–00:00	ABS	ABS Bluelink_New.xlsm, aba JOGAR_BASE, A1, lendo a origem da linha 2	Colar planilha
+BlueLink		Volumetria	15.Service Level Real Time e Monthly - Bluelink 3.xlsm, aba Base_Odigo, A1, lendo da linha 2	Colar planilha
+Nickel	Odigo · 04:00–15:00	Login-Logout	Login_Logout_AAAA-MM-DD.xls em <WFM>\3. Reports\...\Nickel\Login_Logout\<ano>\<MM-Mês> (acumula)	Mover
+Coty	CMS · 08:00–18:00	—	Sem base; aparece como "em breve"	—
+Tipos de alocação
+•	Mover (padrão): recorta o arquivo de Downloads, renomeia e grava no destino; se já houver um arquivo com o mesmo nome, ele é apagado antes.
+•	Colar planilha: lê a origem (.csv, .tsv, .txt, .xlsx, .xlsm) a partir de linha_inicio_origem, limpa a aba de destino a partir da célula indicada e cola os valores. O separador do CSV é detectado sozinho; .tsv usa tabulação.
+•	Colar clipboard: lê o texto copiado do CMS (separado por tabulação), valida o número de colunas, limpa a aba a partir de A2 (o cabeçalho fica) e cola, convertendo números quando possível.
+Verificações de e-mail
+Operação	Verificação	Assunto de referência	Extra
+Epson	Upload Base WhatsApp	Upload Base Epson	Checklist de 4 itens
+Epson	Justificativa de Abandono	Abandonos Epson	Checklist de 4 itens
+Cardif	Pontual VOZ — Justificativa	Cardif - Pontual de Volumetria Voz	Gerador de justificativa + Outlook
+Cardif	Pontual CHAT — Justificativa	Cardif - Pontual de Volumetria Chat	Gerador de justificativa + Outlook
+Cardif	Parcial de Agentes Logados	Cardif - Parcial Agentes Logados WhatsApp	Planilha de apoio + rascunho com as tabelas do RESUMO
+Lexmark	Pontual de Volumetria	Lexmark - Pontual	Checklist de 7 itens
+Como usar
+Painel do dia (tela inicial)
+•	Topo: relógio, intervalo de 30 min atual e contagem regressiva (fica amarela nos últimos 5 min).
+•	Trilho do dia (04h–00h): blocos de 30 min, janela de atendimento da operação, marcador de agora e um ponto colorido para cada ação registrada hoje.
+•	Tabela de operações: sistema, horário ("no horário" ou "fora do horário"), alocações e verificações de hoje e a última ação. Clique na linha para abrir a operação.
+•	Atividade de hoje: os 12 registros mais recentes.
+Página da operação
+Mostra sistema, horário, número de bases e verificações, e dois painéis. "Alocar arquivo" lista cada arquivo de destino com o status: atualizado hoje (verde), de outro dia ou inexistente (amarelo), pasta inacessível (vermelho). "Verificar e-mail" mostra cada verificação como pendente ou com o resultado de hoje. Abaixo ficam os atalhos da operação e a atividade do dia.
+Alocar arquivo
+•	As etapas (Base → Destino → Origem → Confirmar) ficam marcadas no topo.
+•	Com uma só base ou um só arquivo, o app já seleciona sozinho.
+•	A lista de Downloads mostra os 8 arquivos mais relevantes: primeiro os da extensão esperada baixados hoje (pill "sugerido"), depois a mesma extensão, depois o resto. Use a busca por nome e "Atualizar lista".
+•	São aceitos .xlsx, .xls, .xlsm, .csv, .tsv, .txt e .pdf com mais de 100 bytes; temporários ~$ são ignorados.
+•	Antes de executar, o resumo avisa: arquivo atual será substituído, extensão diferente da esperada, download que não é de hoje, pasta inacessível ou aba que será limpa.
+•	No Cardif (clipboard), exporte do CMS para a Área de Armazenamento antes de confirmar; a caixa de diálogo mostra linhas, colunas e a primeira linha copiada.
+Verificar e-mail
+•	"Copiar assunto" põe o assunto no clipboard para buscar no Outlook.
+•	Itens do checklist com └ aparecem recuados como subitens.
+•	Depois de registrar, "Nova verificação" limpa a tela para o próximo intervalo.
+Gerador de justificativa (Cardif VOZ e CHAT)
+1.	Escolha "SLA abaixo de 80%" ou "SLA 80% ou mais"; os campos mudam conforme o template.
+2.	Opcional: "Validar com o e-mail (Outlook)" lê o pontual mais recente, extrai o SLA por canal (SAC & Sinistro, Portal Segurado, Total), escolhe o modo e preenche o desvio de volume.
+3.	Preencha os campos de Volume, AHT e Menor nível de serviço. A prévia mostra os campos vazios em amarelo.
+4.	"Copiar justificativa" copia o texto; "Verificar no Outlook" abre a resposta para revisão; "Enviar Automático" responde direto (exige todos os campos e confirmação) e já registra a verificação como OK.
+No CHAT, a referência do SLA é SAC & Sinistro; na VOZ, o Total.
+Parcial de Agentes Logados (Cardif)
+A planilha de apoio mostra o arquivo, onde colar (Base CMS, A2), de onde copiar (RESUMO) e até qual intervalo copiar. "Preparar e-mail no Outlook" lê as tabelas WhatsApp e WhatsApp After Sales do RESUMO até o intervalo anterior e abre um rascunho de resposta. Sem Outlook, o HTML vai para o clipboard.
+Acesso rápido
+Lista as pastas e arquivos de ATALHOS por operação. Clique para abrir; se o arquivo não existir, abre a pasta dele.
+Histórico
+Filtros por período (Hoje, 7 dias, Tudo) e por operação, sobre os últimos 200 registros.
+Arquitetura do código
+O script é a conversão de um notebook e roda de cima para baixo: dependências, configuração, dados das operações, componentes de interface, telas e, por fim, app.run().
+Célula	Conteúdo
+-1	verificar_dependencias(): checa e instala bibliotecas e o Chromium
+0	Imports centralizados; win32com é opcional (OUTLOOK_OK)
+0.0	Raiz, usuário, pastas por usuário, ATALHOS, log
+Caminhos	MESES_PT, funções de data e CAMINHOS_<OPERAÇÃO> com as funções de pasta e nome do dia
+1	OPERACOES (bases e verificações) e TEMPLATES de justificativa
+2A	Tema (C, F), utilitários, componentes de UI, cola em planilha, Outlook, resumo Cardif, clipboard
+2A.1	Leitura do pontual pelo Outlook e extração do SLA
+2B	Classe WFMApp: janela, barra lateral, topo, Painel do dia, Histórico, Acesso rápido
+2C	_show_operacao, Etapas, _show_alocar
+2D	CAMPOS_JUST, GRUPOS_JUST, _show_verificar
+3	WFMApp().run()
+4	Utilidades de console: ver_historico(), limpar_historico(), verificar_pastas()
+Funções principais
+Função	O que faz	Retorno
+list_downloads()	Lista arquivos válidos em Downloads, do mais novo ao mais antigo	lista de dicts
+check_dest(pasta, nome)	Diz se a pasta é acessível e se o arquivo existe (tamanho, data)	dict
+colar_na_planilha(origem, planilha, aba, celula, linha_inicio)	Lê a origem e cola na aba, limpando antes	(ok, msg)
+ler_clipboard_tsv(root, max_colunas)	Lê e valida o clipboard do CMS	(ok, dados | msg)
+colar_clipboard_na_planilha(...)	Cola o clipboard validado na aba	(ok, msg)
+ler_resumo_cardif(planilha, aba, passo)	Monta o HTML das tabelas do RESUMO até o intervalo anterior	(ok, html | msg)
+ler_corpo_email_outlook(assunto, remetente)	Busca o e-mail mais recente pelo assunto	(ok, dict | msg)
+extrair_sla_pontual(html, tipo)	Lê a tabela Canal / SLA / % Desvio Forecast	(ok, dict | msg)
+preparar_outlook(...) / enviar_outlook(...)	Responde a todos (ou cria novo) e exibe ou envia	(ok, msg)
+save_hist(reg) / load_hist() / hist_periodo(dias, op)	Grava e consulta o histórico	—
+run_async(widget, fn, done)	Roda fn numa thread e chama done na thread da UI	—
+Componentes de interface: Btn (botão com tipos primary, ghost, quiet, ok, danger), CheckRow, Segmented, Campo (entrada com placeholder), Barra, Trilho, Toaster (notificações no canto), Rolagem (área com scroll) e Etapas.
+As telas _show_operacao, _show_alocar e _show_verificar são funções soltas atribuídas depois como métodos de WFMApp.
+ 
+fluxo de dados da Central do RTA
+A configuração vive no próprio script; o app lê Downloads ou o clipboard, grava na rede ou nas planilhas, conversa com o Outlook e registra tudo na pasta do usuário.
+Como adicionar ou alterar uma operação
+Uma operação nova só precisa de três edições: os caminhos, a entrada em OPERACOES e, se quiser, os atalhos. A barra lateral, o painel e o histórico se ajustam sozinhos.
+1.	Em CAMINHOS_<OPERAÇÃO>, declare as pastas. Se o destino ou o nome mudam por dia ou mês, crie uma função como plurix_retroativo_path() usando ano_atual(), mes_atual_nome(), mes_atual_num_nome(), data_hoje_ddmm() ou data_hoje_iso().
+2.	Adicione a operação em OPERACOES:
+"NovaOp": {
+    "cor": "#62D9C0",
+    "icone": "🟢",
+    "descricao": "O que a operação faz",
+    "sistema": "Odigo",
+    "horario": "08:00 – 20:00",
+    "bases": {
+        "Nome da base": {
+            "destino": CAMINHOS_NOVAOP["BASE"],
+            "arquivos": [
+                {"nome_destino": "Base_do_dia", "extensao": ".csv",
+                 "descricao": "Texto exibido na tela"},
+            ],
+        },
+    },
+    "verificacoes_email": [],
+},
+3.	Opcional: adicione a operação em ATALHOS (itens com tipo "pasta" ou "arquivo", nome e caminho).
+Chaves de uma base
+Chave	Quando usar	Padrão
+destino	Sempre; pasta de destino (no modo colar, só informativa)	—
+arquivos	Sempre; lista com nome_destino (sem extensão), extensao, descricao	—
+tipo_alocacao	mover, colar_planilha ou colar_clipboard	mover
+planilha, sheet, celula	Modos de colar	celula A1 (A2 no clipboard)
+linha_inicio_origem	colar_planilha: primeira linha lida da origem	2
+max_colunas	colar_clipboard: limite de colunas por linha	6
+Chaves de uma verificação
+Chave	Conteúdo
+nome, descricao	Exibidos na lista e no cabeçalho; nome também identifica o registro no histórico
+remetente, assunto_referencia	Usados para buscar o e-mail no Outlook
+tipo	checklist, justificativa_voz, justificativa_chat ou parcial_logados
+checklist	Lista de itens; comece com   └ para um subitem
+arquivo_ref	Só em parcial_logados: planilha, abas de colar e copiar, intervalo em minutos, filtro e relatório do CMS
+Regras práticas:
+•	O horário precisa estar no formato HH:MM – HH:MM; se terminar depois da meia-noite (ex.: 04:00 – 00:00), o app entende.
+•	Uma operação sem bases e sem verificacoes_email aparece como "em breve".
+•	Os templates de justificativa ficam em TEMPLATES; cada {campo} do texto precisa existir em CAMPOS_JUST e em algum grupo de GRUPOS_JUST.
+Solução de problemas
+Mensagem ou sintoma	Causa provável	O que fazer
+Planilha aberta no Excel. Feche-a e tente novamente.	O arquivo de destino está aberto	Fechar no Excel (inclusive de outros usuários na rede) e repetir
+Sem permissão para mover	Arquivo de destino aberto ou sem permissão na pasta	Fechar o arquivo; conferir acesso à pasta
+Pasta inacessível / Pasta de destino inacessível	Rede fora, VPN desligada ou unidade mapeada ausente	Testar o caminho no Explorer; ver Acesso rápido
+Clipboard vazio	Nada copiado do CMS	Exportar de novo para a Área de Armazenamento
+Linha N tem X colunas, máximo 6	Exportação do CMS com cabeçalho ou separador errado	Separador (guia), Delimitador (nenhum), Legendas e Cabeçalhos desmarcado
+Aba 'X' não encontrada	A aba foi renomeada na planilha	Corrigir sheet em OPERACOES ou o nome da aba
+Nenhum dado encontrado até HH:MM	RESUMO ainda sem intervalos fechados	Conferir se a Base CMS foi colada e a planilha recalculou
+Botões de Outlook desativados	pywin32 não instalado	pip install pywin32
+Não encontrei a tabela de SLA por canal	O e-mail mudou de formato	Preencher manualmente; ajustar extrair_sla_pontual
+Dados ficam na pasta local .central_rta	A rede estava fora na abertura	Reabrir o app com a rede disponível
+Detalhes de erros	—	Abrir app.log na pasta do usuário
+Pontos de atenção no código
+Itens encontrados na revisão que podem causar erro ou comportamento inesperado:
+•	☐ Caminho do Accor Care inválido: em ATALHOS e CAMINHOS_ACCOR["ACCO_CARE"], o trecho \6. Real Time\"27.Service... deixa uma aspa " dentro do caminho. Remover a aspa.
+•	☐ Atalho "Operacional_Care" do Accor aponta para a raiz da Accor, igual ao "Operacional_Amazon". Confirmar a pasta certa.
+•	☐ CitiBank aparece como configurado: como bases não está vazio, a operação fica clicável com destino "Ainda em criação" (pasta inacessível). Deixar bases vazio até o processo existir para mostrar "em breve".
+•	☐ Resposta ao e-mail leva o histórico: preparar_outlook e enviar_outlook fazem ReplyAll e somam o corpo antigo (corpo_html + mail.HTMLBody), mas o checklist pede "Responder a todos (SEM histórico)". Decidir qual regra vale.
+•	☐ Datas fixadas na abertura: os destinos do Lexmark, Plurix Retroativo e Nickel e os nomes do dia são calculados quando o script carrega. Se o app ficar aberto após a meia-noite (BlueLink vai até 00:00), os arquivos vão para o dia anterior. Reabrir o app no início do dia ou calcular na hora de alocar.
+•	☐ Intervalo do Parcial de Logados: ler_resumo_cardif usa hora <= início do intervalo atual, o que inclui a linha do intervalo ainda aberto se a planilha rotular pelo início. Confirmar com a aba RESUMO.
+•	☐ Colunas do RESUMO: o comentário cita I–L e N–Q, mas o código lê J–L e O–Q.
+•	☐ openpyxl ao salvar .xlsm/.xlsx: pode descartar gráficos, imagens, segmentações e alguns formatos condicionais das planilhas de destino. Validar as planilhas do BlueLink e do Cardif após a primeira cola.
+•	☐ Conversão do clipboard: códigos com zero à esquerda viram número (001 → 1) e textos com vírgula podem virar decimal.
+•	☐ Busca no Outlook percorre a caixa inteira: com caixa grande, pode demorar e travar a tela, pois roda na thread da interface.
+•	☐ pywin32 fora da lista de DEPENDENCIAS: a verificação automática não instala.
+•	☐ Unidades mapeadas X:, Y: e Z: em CAMINHOS_LEXMARK, CAMINHOS_CARDIF e CAMINHOS_NICKEL dependem do mapeamento de cada máquina.
+•	☐ Duplicidades sem efeito: CAMINHOS_EPSON e _texto_para_html são definidos duas vezes; imports repetidos.
+•	☐ Erro de digitação no checklist da VOZ: "-mail recebido".
+•	☐ Histórico falha em silêncio: save_hist ignora erros de gravação, sem aviso ao usuário.
