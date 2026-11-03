@@ -1,4 +1,3 @@
-# Central do RTA — Documentação
 Visão geral
 A Central do RTA (CentralRTA v1.0.0) é um app desktop em Tkinter que padroniza duas rotinas do WFM Real Time: alocar os downloads do dia na pasta ou planilha certa de cada operação e verificar e-mails (pontuais e parciais) seguindo um checklist, com registro em histórico.
 É usado pelos analistas de RTA, roda como script .py, notebook ou .exe, e guarda os dados de cada usuário numa pasta própria na rede. Nada é movido ou colado sem confirmação explícita (checkbox + caixa de diálogo).
