@@ -1,4 +1,4 @@
-# Convertido de: Projeto Automação de atts reemaster 2 1 (1) (1).py
+# Convertido de: Projeto Automação de atts reemaster 2 1 (1) (1).ipynb
 # Gerado automaticamente por conversor_ipynb_py.py
 
 # ── Célula 1 (markdown) ────────────────────────────────────────────────
@@ -61,10 +61,9 @@
 import sys
 
 APP_NOME = "CentralRTA"
-APP_VERSAO = "1.0.0"
+APP_VERSAO = "1.3.1"
 FROZEN = getattr(sys, "frozen", False)   # True quando roda como .exe
 
-import sys
 import os
 import subprocess
 import importlib
@@ -79,6 +78,7 @@ DEPENDENCIAS = [
     ("pandas",     "pandas",         "Leitura dos dados extraídos"),
     ("lxml",       "lxml",           "Leitura de tabelas HTML (pandas.read_html)"),
     ("playwright", "playwright",     "Autenticação SSO via navegador"),
+    ("win32com",   "pywin32",        "Integração com Outlook e Excel"),
 ]
 
 # True  = instala sozinho o que faltar
@@ -227,17 +227,20 @@ if not FROZEN:
     verificar_dependencias()
 
 
-
 # ── Célula 4 (código) ──────────────────────────────────────────────────
 
 # ── Biblioteca padrão ───────────────────────────────────────
 import os
+import io
+import re
 import csv
 import json
 import shutil
 import string
+import logging
 import threading
-from datetime import datetime, timedelta
+import time
+from datetime import datetime, timedelta, time as dt_time
 
 # ── Interface gráfica (Tkinter) ─────────────────────────────
 import tkinter as tk
@@ -250,17 +253,16 @@ from openpyxl.utils import coordinate_to_tuple
 
 # ── Outlook (win32com) — opcional ───────────────────────────
 try:
+    import pythoncom
     import win32com.client
-    OUTLOOK_OK = True
+    WIN32_OK = True
 except ImportError:
-    OUTLOOK_OK = False
-    print("⚠️ win32com não instalado. Envio automático pelo Outlook indisponível.")
-    print("   Execute: pip install pywin32")
+    WIN32_OK = False
+
+OUTLOOK_OK = WIN32_OK
 
 
 # ── Célula 6 (código) ──────────────────────────────────────────────────
-
-
 
 
 # ============================================================
@@ -268,7 +270,7 @@ except ImportError:
 # ============================================================
 # Estrutura esperada na rede:
 #
-#   \\10.205.2.10\wfm\@WFM\Central RTA\
+#   \wfm\@WFM\Central RTA\
 #       ├── Projeto Automação ... .py
 #       └── Users_RTA\
 #             └── <usuario>\                (criada automaticamente)
@@ -280,12 +282,9 @@ except ImportError:
 # Downloads: sempre a pasta do usuário Windows logado
 #            (ex.: C:\Users\sizid001\Downloads)
 # ============================================================
-import os
-import re
 import getpass
-from pathlib import Path
 
-REDE_PADRAO = r"\\10.205.2.10\wfm\@WFM\Central RTA"
+REDE_PADRAO = r"\wfm\@WFM\Central RTA"
 
 def _pasta_app():
     """Pasta do .exe (modo empacotado) ou do .py (modo script)."""
@@ -316,6 +315,11 @@ def _carregar_config():
 
 
 CONFIG = _carregar_config()
+
+EMAIL_MODO = (os.environ.get("RTA_EMAIL") or CONFIG.get("email") or "pwa").lower()
+OUTLOOK_OK = WIN32_OK and EMAIL_MODO == "classico"
+MOTIVO_SEM_OUTLOOK = ("Outlook desktop desativado (e-mail pelo Outlook PWA em construção)"
+                      if WIN32_OK else "pywin32 não instalado. Execute: pip install pywin32")
 
 
 def _descobrir_raiz_app():
@@ -392,92 +396,85 @@ print(f"   📥 Downloads : {PASTA_DOWNLOADS}")
 ATALHOS = {
     "Cardif": [
         {"tipo": "pasta", "nome": "Real Time",
-         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Cardif\6. Real Time"},
+         "caminho": r"Cardif\6. Real Time"},
         {"tipo": "arquivo", "nome": "WhatsApp Cardif.xlsx",
-         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Cardif\6. Real Time\WhatsApp Cardif.xlsx"},
+         "caminho": r"Cardif\6. Real Time\WhatsApp Cardif.xlsx"},
     ],
     "Nickel": [
         {"tipo": "pasta", "nome": "Real Time",
-         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Nickel\6. Real Time"},
+         "caminho": r"Nickel\6. Real Time"},
         {"tipo": "arquivo", "nome": "43.Service Level — Nickel.xlsm",
-         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Nickel\6. Real Time\43.Service Level Real Time e Monthly - Nickel NEW v1.xlsm"},
+         "caminho": r"Nickel\6. Real Time\43.Service Level Real Time e Monthly - Nickel NEW v1.xlsm"},
     ],
     "BlueLink": [
         {"tipo": "pasta", "nome": "Real Time",
-         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\6. Real Time"},
+         "caminho": r"Bluelink\6. Real Time"},
         {"tipo": "arquivo", "nome": "15.Service Level — Bluelink.xlsm",
-         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\6. Real Time\15.Service Level Real Time e Monthly - Bluelink 3.xlsm"},
+         "caminho": r"Bluelink\6. Real Time\15.Service Level Real Time e Monthly - Bluelink 3.xlsm"},
         {"tipo": "pasta", "nome": "Parcial de ABS",
-         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\7. Parcial de ABS"},
+         "caminho": r"Bluelink\7. Parcial de ABS"},
         {"tipo": "arquivo", "nome": "ABS Bluelink_New.xlsm",
-         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\7. Parcial de ABS\ABS Bluelink_New.xlsm"},
+         "caminho": r"Bluelink\7. Parcial de ABS\ABS Bluelink_New.xlsm"},
     ],
     "Lexmark": [
         {"tipo": "pasta", "nome": "Real Time",
-         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Lexmark\6. Real Time"},
+         "caminho": r"Lexmark\6. Real Time"},
         {"tipo": "arquivo", "nome": "20.Service Level — Lexmark.xlsm",
-         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Lexmark\6. Real Time\20.Service Level Real Time e Monthly - Lexmark.xlsm"},
+         "caminho": r"Lexmark\6. Real Time\20.Service Level Real Time e Monthly - Lexmark.xlsm"},
          
          {"tipo": "pasta", "nome": "Reports",
-         "caminho": r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Lexmark\Genesys"},
+         "caminho": r"\wfm\@WFM\3. Reports\Atualização de Relatórios\Lexmark\Genesys"},
         {"tipo": "arquivo", "nome": "Lexmark - Upload Watcher.xlsm",
-         "caminho": r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Lexmark\Genesys\Lexmark - Upload Watcher.xlsm"},
+         "caminho": r"\wfm\@WFM\3. Reports\Atualização de Relatórios\Lexmark\Genesys\Lexmark - Upload Watcher.xlsm"},
     ],
 
-    "Epson": [
-            {"tipo": "pasta", "nome": "Real Time",
-            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Epson\6. Real Time\Whatsapp"},
-            {"tipo": "arquivo", "nome": "Upload - Epson Botmaker.xlsm",
-            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Epson\6. Real Time\Whatsapp\Upload - Epson Botmaker.xlsm"},
-        ],
+"Epson": [
+        {"tipo": "pasta", "nome": "Real Time",
+         "caminho": r"Epson\6. Real Time\Whatsapp"},
+        {"tipo": "arquivo", "nome": "Upload - Epson Botmaker.xlsm",
+         "caminho": r"Epson\6. Real Time\Whatsapp\Upload - Epson Botmaker.xlsm"},
+    ],
 
-    "Plurix": [
-            {"tipo": "pasta", "nome": "Reports",
-            "caminho": r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Plurix"},
-            {"tipo": "arquivo", "nome": "Plurix - Upload.xlsm",
-            "caminho": r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Plurix\Plurix - Upload.xlsm"},
-        ],
-
-
-
-    "Accor": [
-            {"tipo": "pasta", "nome": "Operacional_Amazon",
-            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor"},
-            {"tipo": "arquivo", "nome": "27.Service Level Real Time e Monthly - Accor (Amazon).xlsm",
-            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor\6. Real Time\27.Service Level Real Time e Monthly - Accor (Amazon).xlsm"},
-
-            {"tipo": "pasta", "nome": "Operacional_Care",
-            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor"},
-            {"tipo": "arquivo", "nome": "27.Service Level Real Time e Monthly - Accor - Custome Care (Amazon).xlsm",
-            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor\6. Real Time\27.Service Level Real Time e Monthly - Accor - Custome Care (Amazon).xlsm"},
-
-            
-        ],
+"Plurix": [
+        {"tipo": "pasta", "nome": "Reports",
+         "caminho": r"\wfm\@WFM\3. Reports\Atualização de Relatórios\Plurix"},
+        {"tipo": "arquivo", "nome": "Plurix - Upload.xlsm",
+         "caminho": r"\wfm\@WFM\3. Reports\Atualização de Relatórios\Plurix\Plurix - Upload.xlsm"},
+    ],
 
 
-    "CitiBank": [
-            {"tipo": "pasta", "nome": "Yearly",
-            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Citibank\4 .Yearly"},
-            {"tipo": "arquivo", "nome": "YEARLY - Citibank.xlsm",
-            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Citibank\4 .Yearly\2026\YEARLY - Citibank.xlsm"},
+"Accor": [
+        {"tipo": "pasta", "nome": "Operacional_Amazon",
+         "caminho": r"Accor\6. Real Time"},
+        {"tipo": "arquivo", "nome": "27.Service Level Real Time e Monthly - Accor (Amazon).xlsm",
+         "caminho": r"Accor\6. Real Time\27.Service Level Real Time e Monthly - Accor (Amazon).xlsm"},
 
-            {"tipo": "pasta", "nome": "6.Real Time",
-            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Citibank\6. Real Time"},
-            {"tipo": "arquivo", "nome": "05.Service Level Real Time e Monthly - Citibank.xlsm",
-            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Citibank\6. Real Time\05.Service Level Real Time e Monthly - Citibank.xlsm"}
+         {"tipo": "pasta", "nome": "Operacional_Care",
+         "caminho": r"Accor\6. Real Time"},
+        {"tipo": "arquivo", "nome": "27.Service Level Real Time e Monthly - Accor - Custome Care (Amazon).xlsm",
+         "caminho": r"Accor\6. Real Time\27.Service Level Real Time e Monthly - Accor - Custome Care (Amazon).xlsm"},
 
-        ],
+         #Accor\6. Real Time
+    ],
 
 
+"CitiBank": [
+        {"tipo": "pasta", "nome": "Yearly",
+         "caminho": r"Citibank\4 .Yearly"},
+        {"tipo": "arquivo", "nome": "YEARLY - Citibank.xlsm",
+         "caminho": r"Citibank\4 .Yearly\2026\YEARLY - Citibank.xlsm"},
 
+        {"tipo": "pasta", "nome": "6.Real Time",
+         "caminho": r"Citibank\6. Real Time"},
+        {"tipo": "arquivo", "nome": "05.Service Level Real Time e Monthly - Citibank.xlsm",
+         "caminho": r"Citibank\6. Real Time\05.Service Level Real Time e Monthly - Citibank.xlsm"}
+
+    ],
 
 
 }
 
-
-
-
-import logging
+ATALHOS.update(CONFIG.get("atalhos") or {})
 
 ARQ_LOG = Path(PASTA_USUARIO) / "app.log"
 logging.basicConfig(
@@ -502,12 +499,7 @@ if FROZEN:
 logging.info("%s v%s iniciado por %s", APP_NOME, APP_VERSAO, USUARIO)
 
 
-
-
 # ── Célula 7 (código) ──────────────────────────────────────────────────
-
-
-
 
 
 # ============================================================
@@ -544,21 +536,21 @@ def data_hoje_iso():
 
 # ── EPSON ───────────────────────────────────────────────────
 CAMINHOS_EPSON = {
-    "AGENT": r"\\10.205.2.10\wfm\@WFM\01. Operações\Epson\6. Real Time\Whatsapp\Bases\AGENT",
-    "BOT":   r"\\10.205.2.10\wfm\@WFM\01. Operações\Epson\6. Real Time\Whatsapp\Bases\BOT",
+    "AGENT": r"Epson\6. Real Time\Whatsapp\Bases\AGENT",
+    "BOT":   r"Epson\6. Real Time\Whatsapp\Bases\BOT",
 }
 
 # ── CARDIF ──────────────────────────────────────────────────
 CAMINHOS_CARDIF = {
-    "REAL_TIME":      r"\\10.205.2.10\wfm\@WFM\01. Operações\Cardif\6. Real Time",
-    "WHATSAPP_XLSX":  r"\\10.205.2.10\wfm\@WFM\01. Operações\Cardif\6. Real Time\WhatsApp Cardif.xlsx",
+    "REAL_TIME":      r"Cardif\6. Real Time",
+    "WHATSAPP_XLSX":  r"Cardif\6. Real Time\WhatsApp Cardif.xlsx",
     "HORA_HORA":      r"Y:\Cardif\02. Hora Hora Cardif\2026",
     "JUSTIFICATIVAS": r"Y:\Cardif\01. Operações\Arquivos de Justificativa\2026",
 }
 
 # Dados de e-mail Cardif
 CARDIF_EMAIL = {
-    "remetente": "Mailbox Foundever Brazil MIS Reports",
+    "remetente": "devmis.reports@foundever.com",
     "assunto_voz": "Cardif - Pontual de Volumetria Voz",
     "assunto_chat": "Cardif - Pontual de Volumetria Chat",
     "assunto_logados": "Cardif - Parcial Agentes Logados WhatsApp",
@@ -567,10 +559,9 @@ CARDIF_EMAIL = {
 }
 
 
-
 # ── LEXMARK ─────────────────────────────────────────────────
 CAMINHOS_LEXMARK = {
-    "INTRADAY_BASE": r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Lexmark\Genesys\Bases\Intraday\BRAZIL_PT_BAU",
+    "INTRADAY_BASE": r"\wfm\@WFM\3. Reports\Atualização de Relatórios\Lexmark\Genesys\Bases\Intraday\BRAZIL_PT_BAU",
     "REAL_TIME":     r"X:\@WFM\01. Operações\Lexmark\6. Real Time",
 }
 
@@ -582,8 +573,8 @@ def lexmark_nome_esperado():
 
 # ── PLURIX ──────────────────────────────────────────────────
 CAMINHOS_PLURIX = {
-    "BASES":          r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Plurix\Bases",
-    "RETROATIVO_BASE": r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Plurix\Retroativo",
+    "BASES":          r"\wfm\@WFM\3. Reports\Atualização de Relatórios\Plurix\Bases",
+    "RETROATIVO_BASE": r"\wfm\@WFM\3. Reports\Atualização de Relatórios\Plurix\Retroativo",
 }
 
 def plurix_retroativo_path():
@@ -596,8 +587,8 @@ def plurix_retroativo_nome():
 
 # ── NICKEL ──────────────────────────────────────────────────
 CAMINHOS_NICKEL = {
-    "REAL_TIME":         r"Z:\@WFM\01. Operações\Nickel\6. Real Time",
-    "LOGIN_LOGOUT_BASE": r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Nickel\Login_Logout",
+    "REAL_TIME":         r"",
+    "LOGIN_LOGOUT_BASE": r"\wfm\@WFM\3. Reports\Atualização de Relatórios\Nickel\Login_Logout",
 }
 
 def nickel_login_logout_path():
@@ -612,64 +603,23 @@ def nickel_login_logout_nome():
 
 # ── BLUELINK ────────────────────────────────────────────────
 CAMINHOS_BLUELINK = {
-    "ABS":          r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\7. Parcial de ABS",
-    "ABS_PLANILHA": r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\7. Parcial de ABS\ABS Bluelink_New.xlsm",
-    "REAL_TIME":    r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\6. Real Time",
-    "VOL_PLANILHA": r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\6. Real Time\15.Service Level Real Time e Monthly - Bluelink 3.xlsm",
+    "ABS":          r"Bluelink\7. Parcial de ABS",
+    "ABS_PLANILHA": r"Bluelink\7. Parcial de ABS\ABS Bluelink_New.xlsm",
+    "REAL_TIME":    r"Bluelink\6. Real Time",
+    "VOL_PLANILHA": r"Bluelink\6. Real Time\15.Service Level Real Time e Monthly - Bluelink 3.xlsm",
 }
 
 
 CAMINHOS_ACCOR = {
-    "REAL TIME CARE": r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor\6. Real Time",
+    "REAL TIME CARE": r"Accor\6. Real Time",
 
-    "REAL_TIME":    r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor\6. Real Time",
+    "REAL_TIME":    r"Accor\6. Real Time",
 
-    "ACCOR_AMAZON": r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor\6. Real Time\27.Service Level Real Time e Monthly - Accor (Amazon).xlsm",
-
-    "ACCO_CARE": r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor\6. Real Time\"27.Service Level Real Time e Monthly - Accor - Custome Care (Amazon).xlsm"
-
-
+    "ACCOR_AMAZON": r"Accor\6. Real Time\27.Service Level Real Time e Monthly - Accor (Amazon).xlsm",
+    "ACCOR_CARE": r"Accor\6. Real Time\27.Service Level Real Time e Monthly - Accor - Custome Care (Amazon).xlsm"
 }
-'''def ACCOR_retroativo_path():
-    r"""Gera caminho do Retroativo ACCOR com mês atual. Ex: ...\Retroativo\Outubro"""
-    return os.path.join(CAMINHOS_ACCOR["RETROATIVO_BASE"], mes_atual_nome())
-
-def ACCOR_retroativo_nome():
-    """Gera nome esperado do retroativo. Ex: '13.10 BuscaAtendimentos.csv'"""
-    return f"{data_hoje_ddmm()} BuscaAtendimentos.csv"'''
-
-
-CAMINHOS_EPSON = {
-    "AGENT": r"\\10.205.2.10\wfm\@WFM\01. Operações\Epson\6. Real Time\Whatsapp\Bases\AGENT",
-    "BOT":   r"\\10.205.2.10\wfm\@WFM\01. Operações\Epson\6. Real Time\Whatsapp\Bases\BOT",
-}
-
-
-
-
 # ── COTY ────────────────────────────────────────────────────
 CAMINHOS_COTY = {}
-
-# ── Resumo ──
-print("✅ Caminhos centralizados carregados!")
-print(f"📂 Downloads: {PASTA_DOWNLOADS}")
-print(f"📅 Mês atual: {mes_atual_nome()} ({mes_atual_num_nome()})")
-print(f"📅 Data: {data_hoje_ddmm()} / {data_hoje_iso()}")
-print(f"\n🔵 PLURIX:")
-print(f"   📂 Bases: {CAMINHOS_PLURIX['BASES']}")
-print(f"   📂 Retroativo: {plurix_retroativo_path()}")
-print(f"   📄 Nome retroativo: {plurix_retroativo_nome()}")
-print(f"\n💎 LEXMARK:")
-print(f"   📂 Intraday: {lexmark_intraday_path()}")
-print(f"   📄 Nome: {lexmark_nome_esperado()}")
-print(f"\n🟣 BLUELINK:")
-print(f"   📂 ABS: {CAMINHOS_BLUELINK['ABS']}")
-print(f"   📄 ABS Planilha: {CAMINHOS_BLUELINK['ABS_PLANILHA']}")
-print(f"   📂 Volumetria: {CAMINHOS_BLUELINK['REAL_TIME']}")
-print(f"   📄 Vol Planilha: {CAMINHOS_BLUELINK['VOL_PLANILHA']}")
-print(f"\n🟢 NICKEL:")
-print(f"   📂 Login-Logout: {nickel_login_logout_path()}")
-print(f"   📄 Nome: {nickel_login_logout_nome()}")
 
 
 # ── Célula 8 (markdown) ────────────────────────────────────────────────
@@ -750,13 +700,14 @@ OPERACOES = {
             # ════════════════════════════════════════════════
             # 1. PONTUAL VOZ — Justificativa
             # ════════════════════════════════════════════════
-            {"nome": "Pontual VOZ — Justificativa",
+            {"id": "cardif-pontual-voz", "modo": "responder",
+             "nome": "Pontual VOZ — Justificativa",
              "descricao": "Verificar SLA VOZ e justificar se < 80%",
              "remetente": CARDIF_EMAIL["remetente"],
              "assunto_referencia": CARDIF_EMAIL["assunto_voz"],
              "tipo": "justificativa_voz",
              "checklist": [
-                 "-mail recebido (Pontual Voz)",
+                 "E-mail recebido (Pontual Voz)",
                  "Verificar SLA ≥ 80%?",
                  "Se ≥ 80%: usar template OK",
                  "Se < 80%: identificar desvio VOLUME por intervalo",
@@ -771,7 +722,8 @@ OPERACOES = {
             # ════════════════════════════════════════════════
             # 2. PONTUAL CHAT — Justificativa
             # ════════════════════════════════════════════════
-            {"nome": "Pontual CHAT — Justificativa",
+            {"id": "cardif-pontual-chat", "modo": "responder",
+             "nome": "Pontual CHAT — Justificativa",
              "descricao": "Verificar SLA CHAT (SAC/Sinistro + Portal Segurado)",
              "remetente": CARDIF_EMAIL["remetente"],
              "assunto_referencia": CARDIF_EMAIL["assunto_chat"],
@@ -831,11 +783,11 @@ OPERACOES = {
         "horario": "06:00 – 20:00",
         "bases": {
             "Intraday BRAZIL_PT_BAU": {
-                "destino": lexmark_intraday_path(),
+                "destino": lexmark_intraday_path,
                 "arquivos": [
-                    {"nome_destino": lexmark_nome_esperado().replace(".csv", ""),
+                    {"nome_destino": lambda: lexmark_nome_esperado()[:-4],
                      "extensao": ".csv",
-                     "descricao": f"Detalhe desempenho fila ({datetime.now().strftime('%d/%m/%Y')})"},
+                     "descricao": "Detalhe do desempenho da fila do dia"},
                 ],
             },
         },
@@ -877,11 +829,11 @@ OPERACOES = {
             },
             # ── Retroativo (acumula por dia, pasta do mês) ──
             "Retroativo": {
-                "destino": plurix_retroativo_path(),
+                "destino": plurix_retroativo_path,
                 "arquivos": [
-                    {"nome_destino": plurix_retroativo_nome().replace(".csv", ""),
+                    {"nome_destino": lambda: plurix_retroativo_nome()[:-4],
                      "extensao": ".csv",
-                     "descricao": f"Retroativo do dia ({datetime.now().strftime('%d/%m/%Y')}) — renomear do download"},
+                     "descricao": "Retroativo do dia — renomear do download"},
                 ],
             },
         },
@@ -915,21 +867,10 @@ OPERACOES = {
     "CitiBank": {
         "cor": "#1A365D",
         "icone": "🔵",
-        "descricao": "Upload base + Retroativo diário (Amazon)",
+        "descricao": "Processo em criação",
         "sistema": "CMS / Amazon",
         "horario": "08:00 – 20:00",
-        "bases": {
-            # ── Base principal (substitui sempre) ──
-            "Bases (Upload)": {
-                "destino":"Ainda em criação" '''CAMINHOS_ACCOR["BASES"]''',
-                "arquivos": [
-                    {"nome_destino": "Ainda em criação",
-                     "extensao": ".csv",
-                     "descricao": "Processo em criação : Base principal (renomear do download → substitui anterior)"},
-                ],
-            },
-            
-        },
+        "bases": {},
         "verificacoes_email": [],
     },
 
@@ -982,11 +923,11 @@ OPERACOES = {
         "horario": "04:00 – 15:00",
         "bases": {
             "Login-Logout": {
-                "destino": nickel_login_logout_path(),
+                "destino": nickel_login_logout_path,
                 "arquivos": [
-                    {"nome_destino": nickel_login_logout_nome().replace(".xls", ""),
+                    {"nome_destino": lambda: nickel_login_logout_nome()[:-4],
                      "extensao": ".xls",
-                     "descricao": f"Login/Logout do dia ({datetime.now().strftime('%d/%m/%Y')}) — acumula por dia"},
+                     "descricao": "Login/Logout do dia — acumula por dia"},
                 ],
             },
         },
@@ -1051,33 +992,6 @@ TEMPLATES = {
     ),
 }
 
-# ============================================================
-# RESUMO
-# ============================================================
-
-print("✅ Operações e templates carregados!")
-print(f"📊 {len(OPERACOES)} operações\n")
-
-for nome, dados in OPERACOES.items():
-    nb = len(dados.get("bases", {}))
-    nv = len(dados.get("verificacoes_email", []))
-    na = sum(len(b["arquivos"]) for b in dados.get("bases", {}).values())
-    status = "✅" if (nb > 0 or nv > 0) else "⏳"
-    print(f"  {status} {dados['icone']} {nome}: "
-          f"{nb} base(s) ({na} arq), {nv} verificação(ões)")
-
-print(f"\n🔵 PLURIX detalhes:")
-print(f"   📂 Upload: {CAMINHOS_PLURIX['BASES']}")
-print(f"      📄 BuscaAtendimentos.csv (substitui)")
-print(f"   📂 Retroativo: {plurix_retroativo_path()}")
-print(f"      📄 {plurix_retroativo_nome()} (acumula)")
-print(f"\n🟣 BLUELINK detalhes:")
-print(f"   📂 ABS: {CAMINHOS_BLUELINK['ABS']}")
-print(f"      📄 Planilha: ABS Bluelink_New.xlsm → aba JOGAR_BASE (A1)")
-print(f"   📂 Volumetria: {CAMINHOS_BLUELINK['REAL_TIME']}")
-print(f"      📄 Planilha: 15.Service Level... → aba Base_Odigo (A1)")
-print(f"\n📝 {len(TEMPLATES)} templates")
-
 
 # ── Célula 10 (markdown) ────────────────────────────────────────────────
 # #### ============================================================
@@ -1140,6 +1054,18 @@ def fmt_size(b):
     return f"{b / 1048576:.1f} MB"
 
 
+def resolver(v):
+    return v() if callable(v) else v
+
+
+def destino_base(db):
+    return resolver(db["destino"])
+
+
+def nome_arquivo(arq):
+    return f"{resolver(arq['nome_destino'])}{arq['extensao']}"
+
+
 def list_downloads():
     exts = {".xlsx", ".xls", ".csv", ".tsv", ".txt", ".pdf", ".xlsm"}
     out = []
@@ -1178,24 +1104,40 @@ def check_dest(dest_dir, filename):
     return {"existe": False, "acessivel": True}
 
 
+_HIST_CACHE = {"mtime": None, "dados": []}
+
+
 def load_hist():
-    if os.path.exists(HISTORICO_FILE):
+    try:
+        mt = os.path.getmtime(HISTORICO_FILE)
+    except OSError:
+        return []
+    if _HIST_CACHE["mtime"] != mt:
         try:
             with open(HISTORICO_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return []
+                _HIST_CACHE["dados"] = json.load(f)
+            _HIST_CACHE["mtime"] = mt
+        except (OSError, ValueError):
+            logging.exception("Falha ao ler o histórico")
+    return list(_HIST_CACHE["dados"])
 
 
 def save_hist(reg):
-    h = load_hist()
-    h.insert(0, reg)
+    h = ([reg] + load_hist())[:200]
+    tmp = HISTORICO_FILE + ".tmp"
     try:
-        with open(HISTORICO_FILE, "w", encoding="utf-8") as f:
-            json.dump(h[:200], f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(h, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, HISTORICO_FILE)
+    except OSError:
+        logging.exception("Falha ao gravar o histórico")
+        return False
+    _HIST_CACHE["dados"] = h
+    try:
+        _HIST_CACHE["mtime"] = os.path.getmtime(HISTORICO_FILE)
+    except OSError:
+        _HIST_CACHE["mtime"] = None
+    return True
 
 
 def hist_dt(r):
@@ -1295,6 +1237,7 @@ def run_async(widget, fn, done):
         try:
             box["r"] = fn()
         except Exception as e:
+            logging.exception("Erro em tarefa em segundo plano")
             box["e"] = e
 
     t = threading.Thread(target=work, daemon=True)
@@ -1311,7 +1254,39 @@ def run_async(widget, fn, done):
     widget.after(60, poll)
 
 
+def ponteiro_dentro(widget):
+    try:
+        w = widget.winfo_containing(*widget.winfo_pointerxy())
+    except (KeyError, tk.TclError):
+        return False
+    while w is not None:
+        if w is widget:
+            return True
+        w = w.master
+    return False
+
+
+def auto_wrap(label, folga=0, minimo=120):
+    def ajustar(e):
+        novo = max(e.width - folga, minimo)
+        if abs(int(label.cget("wraplength")) - novo) > 4:
+            label.configure(wraplength=novo)
+    label.master.bind("<Configure>", ajustar, add="+")
+
+
 def clicavel(frame, command, bg, hover):
+    estado = {"hover": False}
+
+    def entrar(e=None):
+        if not estado["hover"]:
+            estado["hover"] = True
+            pintar(hover)
+
+    def sair(e=None):
+        if estado["hover"] and not ponteiro_dentro(frame):
+            estado["hover"] = False
+            pintar(bg)
+
     def pintar(cor):
         def walk(w):
             try:
@@ -1325,8 +1300,8 @@ def clicavel(frame, command, bg, hover):
             walk(frame)
 
     def bind(w):
-        w.bind("<Enter>", lambda e: pintar(hover), add="+")
-        w.bind("<Leave>", lambda e: pintar(bg), add="+")
+        w.bind("<Enter>", entrar, add="+")
+        w.bind("<Leave>", sair, add="+")
         w.bind("<Button-1>", lambda e: command(), add="+")
         try:
             w.configure(cursor="hand2")
@@ -1431,13 +1406,30 @@ class CheckRow(tk.Frame):
         self.box = tk.Canvas(self, width=18, height=18, bg=bg, highlightthickness=0)
         self.box.pack(side="left", padx=(16 + nivel * 28, 12), pady=8)
         self.lbl = tk.Label(self, text=text, font=fnt(10 if nivel == 0 else 9), bg=bg,
-                            anchor="w", justify="left", wraplength=560)
+                            anchor="w", justify="left", wraplength=360)
         self.lbl.pack(side="left", fill="x", expand=True, pady=6)
+        self._hover = False
         for w in (self, self.box, self.lbl):
             w.bind("<Button-1>", self.toggle)
-            w.bind("<Enter>", lambda e: self._bg(C.RAISED))
-            w.bind("<Leave>", lambda e: self._bg(self.bg))
+            w.bind("<Enter>", self._entrar)
+            w.bind("<Leave>", self._sair)
+        self.bind("<Configure>", self._ajustar_wrap, add="+")
         self.set(False)
+
+    def _ajustar_wrap(self, e):
+        novo = max(e.width - (16 + self.nivel * 28) - 18 - 12 - 16, 120)
+        if abs(int(self.lbl.cget("wraplength")) - novo) > 4:
+            self.lbl.configure(wraplength=novo)
+
+    def _entrar(self, e=None):
+        if not self._hover:
+            self._hover = True
+            self._bg(C.RAISED)
+
+    def _sair(self, e=None):
+        if self._hover and not ponteiro_dentro(self):
+            self._hover = False
+            self._bg(self.bg)
 
     def _bg(self, cor):
         for w in (self, self.box, self.lbl):
@@ -1624,8 +1616,7 @@ class Toaster:
         for t in reversed(self.ativos):
             t.place(relx=1, rely=1, x=-22 + self.off.get(t, 0), y=y, anchor="se")
             t.lift()
-            t.update_idletasks()
-            y -= t.winfo_reqheight() + 8
+            y -= max(t.winfo_reqheight(), 48) + 8
 
     def _fechar(self, t):
         if t in self.ativos:
@@ -1636,360 +1627,243 @@ class Toaster:
 
 
 # ============================================================
-# COLAR BASE EM PLANILHA (BlueLink e futuros)
-# Lê o arquivo de origem da linha_inicio até o fim,
-# limpa a sheet de destino e cola a partir da célula indicada.
+# LEITURA DE ORIGEM, CONVERSÃO DE VALORES E GRAVAÇÃO EM PLANILHA
+# Com pywin32 + Excel instalado, a gravação é feita pelo próprio
+# Excel (preserva macros, gráficos, tabelas dinâmicas e recalcula).
+# Sem Excel, usa openpyxl como contingência.
 # ============================================================
 
-def colar_na_planilha(caminho_origem, caminho_planilha, sheet_nome, celula="A1", linha_inicio=2):
-    """
-    Lê dados do arquivo de origem (csv/xlsx/tsv/xlsm) a partir de linha_inicio,
-    abre a planilha destino (.xlsm/.xlsx), limpa a sheet e cola os dados.
-    Retorna (True, msg) ou (False, msg).
-    """
+_RE_INT = re.compile(r"-?\d+")
+_RE_MILHAR = re.compile(r"-?\d{1,3}(\.\d{3})+")
+_RE_DEC_VIRGULA = re.compile(r"-?(\d{1,3}(\.\d{3})+|\d+),\d+")
+_RE_DEC_PONTO = re.compile(r"-?\d+\.\d+")
+_RE_DATA_BR = re.compile(r"(\d{2})/(\d{2})/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?")
+_RE_DATA_ISO = re.compile(r"(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?")
+_RE_HORA = re.compile(r"(\d{1,2}):(\d{2})(?::(\d{2}))?")
 
-    ext_orig = os.path.splitext(caminho_origem)[1].lower()
-    ext_plan = os.path.splitext(caminho_planilha)[1].lower()
 
-    # ── Ler origem ──────────────────────────────────────────
-    dados = []
-    try:
-        if ext_orig in (".xlsx", ".xlsm"):
+def converter_valor(valor):
+    if not isinstance(valor, str):
+        return valor
+    s = valor.strip()
+    if not s:
+        return None
+    if _RE_INT.fullmatch(s):
+        digitos = s.lstrip("-")
+        if (len(digitos) > 1 and digitos.startswith("0")) or len(digitos) > 15:
+            return s
+        return int(s)
+    if _RE_MILHAR.fullmatch(s):
+        return int(s.replace(".", ""))
+    if _RE_DEC_VIRGULA.fullmatch(s):
+        return float(s.replace(".", "").replace(",", "."))
+    if _RE_DEC_PONTO.fullmatch(s):
+        return float(s)
+    for rx, ordem in ((_RE_DATA_BR, (2, 1, 0)), (_RE_DATA_ISO, (0, 1, 2))):
+        m = rx.fullmatch(s)
+        if m:
+            g = m.groups()
             try:
-                from openpyxl import load_workbook
-            except ImportError:
-                return False, "Biblioteca openpyxl não instalada. Execute: pip install openpyxl"
-            wb_src = load_workbook(caminho_origem, read_only=True, data_only=True)
-            ws_src = wb_src.active
-            for i, row in enumerate(ws_src.iter_rows(values_only=True), start=1):
-                if i >= linha_inicio:
-                    dados.append(list(row))
-            wb_src.close()
-        elif ext_orig in (".csv", ".tsv", ".txt"):
-            delim = "\t" if ext_orig == ".tsv" else None
-            with open(caminho_origem, "r", encoding="utf-8-sig", errors="replace") as f:
-                if delim:
-                    reader = csv.reader(f, delimiter=delim)
-                else:
-                    sniffer = csv.Sniffer()
-                    amostra = f.read(8192)
-                    f.seek(0)
-                    try:
-                        dialect = sniffer.sniff(amostra)
-                        reader = csv.reader(f, dialect)
-                    except csv.Error:
-                        reader = csv.reader(f, delimiter=",")
-                for i, row in enumerate(reader, start=1):
-                    if i >= linha_inicio:
-                        dados.append(row)
+                return datetime(int(g[ordem[0]]), int(g[ordem[1]]), int(g[ordem[2]]),
+                                int(g[3] or 0), int(g[4] or 0), int(g[5] or 0))
+            except ValueError:
+                return s
+    m = _RE_HORA.fullmatch(s)
+    if m:
+        h, mi, se = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
+        if h < 24 and mi < 60 and se < 60:
+            return dt_time(h, mi, se)
+    return s
+
+
+def _ler_texto(caminho):
+    for enc in ("utf-8-sig", "cp1252"):
+        try:
+            with open(caminho, "r", encoding=enc, newline="") as f:
+                return f.read()
+        except UnicodeDecodeError:
+            continue
+    with open(caminho, "r", encoding="latin-1", newline="") as f:
+        return f.read()
+
+
+def _sem_linhas_vazias_no_fim(linhas):
+    while linhas and all(v in (None, "") for v in linhas[-1]):
+        linhas.pop()
+    return linhas
+
+
+def ler_origem(caminho, linha_inicio=1):
+    ext = os.path.splitext(caminho)[1].lower()
+    if ext in (".xlsx", ".xlsm"):
+        wb = load_workbook(caminho, read_only=True, data_only=True)
+        try:
+            linhas = [list(r) for r in wb.active.iter_rows(min_row=linha_inicio, values_only=True)]
+        finally:
+            wb.close()
+        return _sem_linhas_vazias_no_fim(linhas)
+    if ext in (".csv", ".tsv", ".txt"):
+        texto = _ler_texto(caminho)
+        amostra = texto[:8192]
+        if ext == ".tsv":
+            delim = "\t"
         else:
-            return False, f"Formato de origem não suportado: {ext_orig}"
-    except Exception as e:
-        return False, f"Erro ao ler origem: {e}"
+            try:
+                delim = csv.Sniffer().sniff(amostra, delimiters=";,\t|").delimiter
+            except csv.Error:
+                delim = ";" if amostra.count(";") > amostra.count(",") else ","
+        linhas = list(csv.reader(io.StringIO(texto), delimiter=delim))[linha_inicio - 1:]
+        return _sem_linhas_vazias_no_fim([[converter_valor(v) for v in r] for r in linhas])
+    raise ValueError(f"Formato de origem não suportado: {ext}")
 
-    if not dados:
-        return False, "Nenhum dado encontrado a partir da linha indicada."
 
-    # ── Colar no destino ────────────────────────────────────
+def _mesmo_arquivo(a, b):
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
+def _valor_para_com(v):
+    if isinstance(v, dt_time):
+        return (v.hour * 3600 + v.minute * 60 + v.second) / 86400
+    return v
+
+
+def _gravar_excel_com(caminho, sheet_nome, celula, dados, max_colunas=None):
+    pythoncom.CoInitialize()
+    xl = wb = None
+    instancia_propria = False
     try:
-        from openpyxl import load_workbook
-    except ImportError:
-        return False, "Biblioteca openpyxl não instalada. Execute: pip install openpyxl"
+        try:
+            ativo = win32com.client.GetActiveObject("Excel.Application")
+            for w in ativo.Workbooks:
+                if _mesmo_arquivo(w.FullName, caminho) or w.Name.lower() == os.path.basename(caminho).lower():
+                    xl, wb = ativo, w
+                    break
+        except Exception:
+            pass
 
-    try:
-        keep_vba = ext_plan == ".xlsm"
-        wb_dst = load_workbook(caminho_planilha, keep_vba=keep_vba)
-    except Exception as e:
-        return False, f"Erro ao abrir planilha destino: {e}"
+        if wb is None:
+            xl = win32com.client.DispatchEx("Excel.Application")
+            instancia_propria = True
+            xl.Visible = False
+            xl.DisplayAlerts = False
+            xl.AskToUpdateLinks = False
+            xl.EnableEvents = False
+            xl.AutomationSecurity = 3
+            wb = xl.Workbooks.Open(caminho, UpdateLinks=0, ReadOnly=False)
 
-    if sheet_nome not in wb_dst.sheetnames:
-        abas = ", ".join(wb_dst.sheetnames)
-        wb_dst.close()
-        return False, f"Aba '{sheet_nome}' não encontrada. Abas disponíveis: {abas}"
+        if wb.ReadOnly:
+            return False, "A planilha está aberta por outra pessoa (somente leitura). Tente de novo em instantes."
 
-    ws_dst = wb_dst[sheet_nome]
+        nomes = [s.Name for s in wb.Worksheets]
+        if sheet_nome not in nomes:
+            return False, f"Aba '{sheet_nome}' não encontrada. Abas disponíveis: {', '.join(nomes)}"
+        ws = wb.Worksheets(sheet_nome)
 
-    # Descobrir célula inicial
-    from openpyxl.utils import coordinate_to_tuple
-    try:
         row_ini, col_ini = coordinate_to_tuple(celula)
-    except Exception:
-        row_ini, col_ini = 1, 1
+        usado = ws.UsedRange
+        ult_lin = usado.Row + usado.Rows.Count - 1
+        ult_col = col_ini + max_colunas - 1 if max_colunas else usado.Column + usado.Columns.Count - 1
+        if ult_lin >= row_ini and ult_col >= col_ini:
+            ws.Range(ws.Cells(row_ini, col_ini), ws.Cells(ult_lin, ult_col)).ClearContents()
 
-    # Limpar área existente na sheet
-    if ws_dst.max_row and ws_dst.max_column:
-        for row in ws_dst.iter_rows(min_row=row_ini, max_row=ws_dst.max_row,
-                                     min_col=col_ini, max_col=ws_dst.max_column):
-            for cell in row:
-                cell.value = None
+        n_col = max(len(r) for r in dados)
+        matriz = tuple(tuple(_valor_para_com(v) for v in list(r) + [None] * (n_col - len(r))) for r in dados)
+        ws.Range(ws.Cells(row_ini, col_ini),
+                 ws.Cells(row_ini + len(matriz) - 1, col_ini + n_col - 1)).Value = matriz
+        xl.Calculate()
+        wb.Save()
+        return True, ""
+    finally:
+        if instancia_propria:
+            try:
+                if wb is not None:
+                    wb.Close(SaveChanges=False)
+            except Exception:
+                pass
+            try:
+                xl.Quit()
+            except Exception:
+                pass
+        xl = wb = None
+        pythoncom.CoUninitialize()
 
-    # Colar dados
-    max_cols = 0
-    for r_idx, row_data in enumerate(dados):
-        if len(row_data) > max_cols:
-            max_cols = len(row_data)
-        for c_idx, valor in enumerate(row_data):
-            ws_dst.cell(row=row_ini + r_idx, column=col_ini + c_idx, value=valor)
 
+def _gravar_openpyxl(caminho, sheet_nome, celula, dados, max_colunas=None):
     try:
-        wb_dst.save(caminho_planilha)
+        wb = load_workbook(caminho, keep_vba=caminho.lower().endswith(".xlsm"))
     except PermissionError:
-        wb_dst.close()
         return False, "Planilha aberta no Excel. Feche-a e tente novamente."
     except Exception as e:
-        wb_dst.close()
-        return False, f"Erro ao salvar: {e}"
-
-    wb_dst.close()
-    return True, f"{len(dados)} linhas × {max_cols} colunas coladas em '{sheet_nome}!{celula}'"
-
-
-# ============================================================
-# CONVERSÃO TEXTO → HTML PARA E-MAIL
-# ============================================================
-
-def _texto_para_html(texto):
-    """Converte texto simples em HTML para corpo do e-mail Outlook."""
-    html = texto.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    html = html.replace("\n\n", "</p><p>").replace("\n", "<br>")
-    return (
-        '<div style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #333;">'
-        f'<p>{html}</p>'
-        '</div>'
-    )
-
-
-# ============================================================
-# ENVIO DE E-MAIL VIA OUTLOOK (win32com)
-# ============================================================
-
-def preparar_outlook(assunto, corpo_html, responder_a=None):
-    """
-    Abre o e-mail no Outlook para revisão manual (Display, não Send).
-    Se responder_a for informado, busca o e-mail mais recente com esse assunto
-    e faz ReplyAll. Senão cria novo.
-    Retorna (True, msg) ou (False, msg).
-    """
-    if not OUTLOOK_OK:
-        return False, "win32com não instalado. Execute: pip install pywin32"
+        return False, f"Erro ao abrir planilha destino: {e}"
     try:
-        outlook = win32com.client.Dispatch("Outlook.Application")
-        mail = None
-
-        if responder_a:
-            ns = outlook.GetNamespace("MAPI")
-            inbox = ns.GetDefaultFolder(6)
-            items = inbox.Items
-            items.Sort("[ReceivedTime]", True)
-            for item in items:
-                try:
-                    if responder_a.lower() in item.Subject.lower():
-                        mail = item.ReplyAll
-                        mail.HTMLBody = corpo_html + "<br><br>" + mail.HTMLBody
-                        break
-                except Exception:
-                    continue
-
-        if mail is None:
-            mail = outlook.CreateItem(0)
-            mail.Subject = assunto
-            mail.HTMLBody = corpo_html
-
-        mail.Display()
-        return True, "E-mail aberto no Outlook para revisão."
-    except Exception as e:
-        return False, f"Erro ao abrir Outlook: {e}"
-
-
-def enviar_outlook(assunto, corpo_html, responder_a=None):
-    """
-    Envia o e-mail automaticamente via Outlook (Send).
-    Mesma lógica de busca do preparar_outlook, mas faz Send.
-    Retorna (True, msg) ou (False, msg).
-    """
-    if not OUTLOOK_OK:
-        return False, "win32com não instalado. Execute: pip install pywin32"
-    try:
-        outlook = win32com.client.Dispatch("Outlook.Application")
-        mail = None
-
-        if responder_a:
-            ns = outlook.GetNamespace("MAPI")
-            inbox = ns.GetDefaultFolder(6)
-            items = inbox.Items
-            items.Sort("[ReceivedTime]", True)
-            for item in items:
-                try:
-                    if responder_a.lower() in item.Subject.lower():
-                        mail = item.ReplyAll
-                        mail.HTMLBody = corpo_html + "<br><br>" + mail.HTMLBody
-                        break
-                except Exception:
-                    continue
-
-        if mail is None:
-            mail = outlook.CreateItem(0)
-            mail.Subject = assunto
-            mail.HTMLBody = corpo_html
-
-        mail.Send()
-        return True, "E-mail enviado com sucesso pelo Outlook."
-    except Exception as e:
-        return False, f"Erro ao enviar: {e}"
-
-# ============================================================
-# LER RESUMO DA PLANILHA CARDIF E MONTAR HTML
-# Lê aba RESUMO do WhatsApp Cardif.xlsx, extrai as duas tabelas
-# (WhatsApp e WhatsApp After Sales) até o intervalo anterior,
-# e retorna HTML formatado para colar no e-mail.
-# ============================================================
-
-def ler_resumo_cardif(caminho_planilha, sheet_nome="RESUMO", passo_min=30):
-    """
-    Lê a aba RESUMO do WhatsApp Cardif.xlsx.
-    Extrai duas tabelas: WhatsApp (colunas I-L) e WhatsApp After Sales (colunas N-Q).
-    Filtra até o intervalo anterior (30 em 30).
-    Retorna (True, html_str) ou (False, msg_erro).
-    """
-    if not os.path.exists(caminho_planilha):
-        return False, f"Planilha não encontrada: {caminho_planilha}"
-
-    try:
-        wb = load_workbook(caminho_planilha, read_only=True, data_only=True)
-    except Exception as e:
-        return False, f"Erro ao abrir planilha: {e}"
-
-    if sheet_nome not in wb.sheetnames:
+        if sheet_nome not in wb.sheetnames:
+            return False, f"Aba '{sheet_nome}' não encontrada. Abas disponíveis: {', '.join(wb.sheetnames)}"
+        ws = wb[sheet_nome]
+        row_ini, col_ini = coordinate_to_tuple(celula)
+        ult_col = col_ini + max_colunas - 1 if max_colunas else max(ws.max_column, col_ini)
+        for row in ws.iter_rows(min_row=row_ini, max_row=max(ws.max_row, row_ini),
+                                min_col=col_ini, max_col=ult_col):
+            for cell in row:
+                cell.value = None
+        for r_idx, row_data in enumerate(dados):
+            for c_idx, valor in enumerate(row_data):
+                ws.cell(row=row_ini + r_idx, column=col_ini + c_idx, value=valor)
+        try:
+            wb.save(caminho)
+        except PermissionError:
+            return False, "Planilha aberta no Excel. Feche-a e tente novamente."
+        return True, ""
+    finally:
         wb.close()
-        return False, f"Aba '{sheet_nome}' não encontrada."
 
-    ws = wb[sheet_nome]
 
-    # Calcular intervalo anterior
-    now = datetime.now()
-    ini_atual = now.replace(minute=now.minute - now.minute % passo_min, second=0, microsecond=0)
-    intervalo_limite = ini_atual  # Até aqui (não inclui o atual)
+def gravar_na_planilha(caminho, sheet_nome, celula, dados, max_colunas=None):
+    if not dados:
+        return False, "Nenhum dado para colar."
+    n_col = max(len(r) for r in dados)
+    resumo = f"{len(dados)} linhas × {n_col} colunas coladas em '{sheet_nome}!{celula}'"
+    if WIN32_OK:
+        try:
+            ok, msg = _gravar_excel_com(caminho, sheet_nome, celula, dados, max_colunas)
+            return (True, resumo + " (via Excel)") if ok else (False, msg)
+        except Exception:
+            logging.exception("Excel indisponível para %s; usando openpyxl", caminho)
+    try:
+        ok, msg = _gravar_openpyxl(caminho, sheet_nome, celula, dados, max_colunas)
+    except Exception as e:
+        logging.exception("Falha ao gravar em %s", caminho)
+        return False, f"Erro ao gravar na planilha: {e}"
+    return (True, resumo) if ok else (False, msg)
 
-    def parse_hora_celula(val):
-        """Converte valor de célula (time/str) para objeto time."""
-        if val is None:
-            return None
-        if hasattr(val, 'hour'):
-            return val
-        s = str(val).strip()
-        if ":" in s:
-            parts = s.split(":")
-            try:
-                from datetime import time
-                return time(int(parts[0]), int(parts[1]))
-            except (ValueError, IndexError):
-                return None
-        return None
 
-    def hora_antes_limite(val):
-        """Retorna True se o horário da célula é antes do intervalo limite."""
-        t = parse_hora_celula(val)
-        if t is None:
-            return False
-        from datetime import time
-        limite = time(intervalo_limite.hour, intervalo_limite.minute)
-        return t <= limite
+def colar_na_planilha(caminho_origem, caminho_planilha, sheet_nome, celula="A1", linha_inicio=2):
+    try:
+        dados = ler_origem(caminho_origem, linha_inicio)
+    except Exception as e:
+        logging.exception("Falha ao ler %s", caminho_origem)
+        return False, f"Erro ao ler origem: {e}"
+    if not dados:
+        return False, "Nenhum dado encontrado a partir da linha indicada."
+    return gravar_na_planilha(caminho_planilha, sheet_nome, celula, dados)
 
-    def ler_tabela(col_inicio, col_fim, linha_header, linha_dados_inicio):
-        """Lê uma tabela da planilha entre colunas e linhas específicas."""
-        headers = []
-        for c in range(col_inicio, col_fim + 1):
-            val = ws.cell(row=linha_header, column=c).value
-            headers.append(str(val) if val else "")
-
-        rows = []
-        for r in range(linha_dados_inicio, ws.max_row + 1):
-            hora_val = ws.cell(row=r, column=col_inicio).value
-            if hora_val is None:
-                break
-            if not hora_antes_limite(hora_val):
-                break
-            row = []
-            for c in range(col_inicio, col_fim + 1):
-                val = ws.cell(row=r, column=c).value
-                if val is None:
-                    row.append("")
-                elif hasattr(val, 'strftime'):
-                    row.append(val.strftime("%H:%M"))
-                else:
-                    row.append(str(val))
-            rows.append(row)
-
-        return headers, rows
-
-    # Tabela WhatsApp: colunas J-L (10-12), header linha 1, dados linha 2
-    # Baseado na imagem: J=Intervalo, K=Logados, L=Deslogues
-    headers_wa, rows_wa = ler_tabela(10, 12, 1, 2)
-
-    # Tabela WhatsApp After Sales: colunas O-Q (15-17), header linha 1, dados linha 2
-    headers_as, rows_as = ler_tabela(15, 17, 1, 2)
-
-    wb.close()
-
-    if not rows_wa and not rows_as:
-        return False, f"Nenhum dado encontrado até {intervalo_limite:%H:%M}."
-
-    # Montar HTML
-    def tabela_html(titulo, headers, rows):
-        if not rows:
-            return ""
-        html = f'<p><b><i>{titulo}:</i></b></p>\n'
-        html += '<table border="1" cellpadding="4" cellspacing="0" '
-        html += 'style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:10pt;">\n'
-        html += '<tr style="background-color:#4472C4;color:white;font-weight:bold;">'
-        for h in headers:
-            html += f'<td style="padding:4px 8px;">{h}</td>'
-        html += '</tr>\n'
-        for i, row in enumerate(rows):
-            bg = "#D9E2F3" if i % 2 == 0 else "#FFFFFF"
-            html += f'<tr style="background-color:{bg};">'
-            for val in row:
-                html += f'<td style="padding:4px 8px;">{val}</td>'
-            html += '</tr>\n'
-        html += '</table>\n'
-        return html
-
-    corpo = '<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#333;">\n'
-    corpo += tabela_html("WhatsApp", headers_wa, rows_wa)
-    corpo += '<br>\n'
-    corpo += tabela_html("WhatsApp After Sales", headers_as, rows_as)
-    corpo += '</div>'
-
-    total_rows = len(rows_wa) + len(rows_as)
-    return True, corpo
 
 # ============================================================
-# COLAR CLIPBOARD NA PLANILHA (Cardif — Parcial de Logados)
-# Lê texto tab-separated do clipboard do Windows,
-# valida número de colunas, limpa a sheet e cola.
+# CLIPBOARD DO CMS (Cardif — Parcial de Logados)
 # ============================================================
 
 def ler_clipboard_tsv(root, max_colunas=None):
-    """
-    Lê o conteúdo do clipboard como texto tab-separated.
-    Retorna (True, dados_lista) ou (False, msg_erro).
-    dados_lista = lista de listas (cada linha = lista de valores).
-    """
     try:
         texto = root.clipboard_get()
     except tk.TclError:
         return False, "Clipboard vazio. Exporte os dados do CMS primeiro."
 
-    if not texto or not texto.strip():
-        return False, "Clipboard vazio. Exporte os dados do CMS primeiro."
-
-    linhas = texto.strip().split("\n")
     dados = []
-    for i, linha in enumerate(linhas):
-        # CMS exporta com tab como separador
-        colunas = linha.split("\t")
-
-        # Validar número de colunas
+    for i, linha in enumerate(texto.splitlines()):
+        colunas = linha.rstrip("\r").split("\t")
+        while colunas and not colunas[-1].strip():
+            colunas.pop()
+        if not colunas:
+            continue
         if max_colunas and len(colunas) > max_colunas:
             return False, (
                 f"Linha {i + 1} tem {len(colunas)} colunas, "
@@ -2000,104 +1874,195 @@ def ler_clipboard_tsv(root, max_colunas=None):
                 f"  • ☐ Legendas e Cabeçalhos: DESMARCADO\n\n"
                 f"Conteúdo da linha:\n{linha[:200]}"
             )
-
-        # Limpar valores vazios no final
-        while colunas and colunas[-1].strip() == "":
-            colunas.pop()
-
-        if colunas:
-            dados.append(colunas)
+        dados.append(colunas)
 
     if not dados:
-        return False, "Clipboard não contém dados válidos."
-
+        return False, "Clipboard vazio. Exporte os dados do CMS primeiro."
     return True, dados
 
 
-def colar_clipboard_na_planilha(root, caminho_planilha, sheet_nome,
-                                 celula="A2", max_colunas=6):
-    """
-    Lê clipboard (tab-separated), valida colunas, limpa a sheet e cola.
-    Retorna (True, msg) ou (False, msg).
-    """
-    # 1. Ler clipboard
-    ok, resultado = ler_clipboard_tsv(root, max_colunas)
-    if not ok:
-        return False, resultado
-
-    dados = resultado
-
-    # 2. Validar que parece dados do CMS
+def colar_clipboard_na_planilha(caminho_planilha, sheet_nome, dados, celula="A2", max_colunas=6):
     if len(dados) < 2:
-        return False, (
-            f"Apenas {len(dados)} linha(s) no clipboard. "
-            f"Verifique se exportou corretamente do CMS."
-        )
+        return False, f"Apenas {len(dados)} linha(s) no clipboard. Verifique se exportou corretamente do CMS."
+    valores = [[converter_valor(v) for v in r] for r in dados]
+    return gravar_na_planilha(caminho_planilha, sheet_nome, celula, valores, max_colunas)
 
-    # 3. Abrir planilha
-    ext_plan = os.path.splitext(caminho_planilha)[1].lower()
+
+# ============================================================
+# OUTLOOK
+# Busca filtrada no servidor (Restrict) e resposta a todos SEM histórico.
+# ============================================================
+
+def _texto_para_html(texto):
+    html = texto.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    html = html.replace("\n\n", "</p><p>").replace("\n", "<br>")
+    return (
+        '<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#333;">'
+        f'<p>{html}</p></div>'
+    )
+
+
+def _outlook_inbox():
+    outlook = win32com.client.Dispatch("Outlook.Application")
+    return outlook, outlook.GetNamespace("MAPI").GetDefaultFolder(6)
+
+
+def _buscar_email(inbox, assunto, remetente=None):
+    itens = inbox.Items
     try:
-        keep_vba = ext_plan == ".xlsm"
-        wb = load_workbook(caminho_planilha, keep_vba=keep_vba)
+        filtro = "@SQL=\"urn:schemas:httpmail:subject\" LIKE '%" + assunto.replace("'", "''") + "%'"
+        itens = itens.Restrict(filtro)
+    except Exception:
+        logging.warning("Restrict indisponível; varrendo a caixa inteira")
+    itens.Sort("[ReceivedTime]", True)
+    for item in itens:
+        try:
+            if assunto.lower() not in (item.Subject or "").lower():
+                continue
+            if remetente and remetente.lower() not in (item.SenderName or "").lower():
+                continue
+            return item
+        except Exception:
+            continue
+    return None
+
+
+def _montar_email(assunto, corpo_html, responder_a=None, remetente=None):
+    outlook, inbox = _outlook_inbox()
+    if responder_a:
+        original = _buscar_email(inbox, responder_a, remetente)
+        if original is None:
+            return None, f"Nenhum e-mail encontrado com o assunto '{responder_a}'."
+        mail = original.ReplyAll()
+    else:
+        mail = outlook.CreateItem(0)
+        mail.Subject = assunto
+    mail.HTMLBody = corpo_html
+    return mail, ""
+
+
+def preparar_outlook(assunto, corpo_html, responder_a=None, remetente=None):
+    if not OUTLOOK_OK:
+        return False, MOTIVO_SEM_OUTLOOK
+    try:
+        mail, erro = _montar_email(assunto, corpo_html, responder_a, remetente)
+        if mail is None:
+            return False, erro
+        mail.Display()
+        return True, "E-mail aberto no Outlook para revisão."
+    except Exception as e:
+        logging.exception("Falha ao preparar e-mail")
+        return False, f"Erro ao abrir Outlook: {e}"
+
+
+def enviar_outlook(assunto, corpo_html, responder_a=None, remetente=None):
+    if not OUTLOOK_OK:
+        return False, MOTIVO_SEM_OUTLOOK
+    try:
+        mail, erro = _montar_email(assunto, corpo_html, responder_a, remetente)
+        if mail is None:
+            return False, erro
+        mail.Send()
+        return True, "E-mail enviado com sucesso pelo Outlook."
+    except Exception as e:
+        logging.exception("Falha ao enviar e-mail")
+        return False, f"Erro ao enviar: {e}"
+
+
+# ============================================================
+# RESUMO DA PLANILHA CARDIF → HTML
+# Tabelas WhatsApp (J–L) e WhatsApp After Sales (O–Q),
+# linhas até o intervalo anterior ao atual.
+# ============================================================
+
+def _como_hora(val):
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val.time()
+    if isinstance(val, dt_time):
+        return val
+    if isinstance(val, (int, float)) and 0 <= val < 1:
+        seg = round(val * 86400)
+        return dt_time(seg // 3600 % 24, seg % 3600 // 60)
+    m = _RE_HORA.match(str(val).strip())
+    if m and int(m.group(1)) < 24:
+        return dt_time(int(m.group(1)), int(m.group(2)))
+    return None
+
+
+def _fmt_celula(v):
+    if v is None:
+        return ""
+    if isinstance(v, (datetime, dt_time)):
+        return v.strftime("%H:%M")
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v)
+
+
+def ler_resumo_cardif(caminho_planilha, sheet_nome="RESUMO", passo_min=30):
+    if not os.path.exists(caminho_planilha):
+        return False, f"Planilha não encontrada: {caminho_planilha}"
+    try:
+        wb = load_workbook(caminho_planilha, read_only=True, data_only=True)
     except Exception as e:
         return False, f"Erro ao abrir planilha: {e}"
-
-    if sheet_nome not in wb.sheetnames:
-        abas = ", ".join(wb.sheetnames)
-        wb.close()
-        return False, f"Aba '{sheet_nome}' não encontrada. Abas: {abas}"
-
-    ws = wb[sheet_nome]
-
-    # 4. Descobrir célula inicial
     try:
-        row_ini, col_ini = coordinate_to_tuple(celula)
-    except Exception:
-        row_ini, col_ini = 2, 1
-
-    # 5. Limpar dados antigos (preservar cabeçalho na linha 1)
-    if ws.max_row and ws.max_row >= row_ini:
-        for row in ws.iter_rows(min_row=row_ini, max_row=ws.max_row,
-                                 min_col=col_ini,
-                                 max_col=max(ws.max_column, col_ini + max_colunas)):
-            for cell in row:
-                cell.value = None
-
-    # 6. Colar dados
-    max_cols_real = 0
-    for r_idx, row_data in enumerate(dados):
-        if len(row_data) > max_cols_real:
-            max_cols_real = len(row_data)
-        for c_idx, valor in enumerate(row_data):
-            # Tentar converter números
-            val_limpo = valor.strip()
-            if val_limpo:
-                try:
-                    val_limpo = int(val_limpo)
-                except ValueError:
-                    try:
-                        val_limpo = float(val_limpo.replace(",", "."))
-                    except ValueError:
-                        pass
-            else:
-                val_limpo = None
-            ws.cell(row=row_ini + r_idx, column=col_ini + c_idx, value=val_limpo)
-
-    # 7. Salvar
-    try:
-        wb.save(caminho_planilha)
-    except PermissionError:
+        if sheet_nome not in wb.sheetnames:
+            return False, f"Aba '{sheet_nome}' não encontrada."
+        linhas = [list(r) for r in wb[sheet_nome].iter_rows(min_row=1, max_col=17, values_only=True)]
+    finally:
         wb.close()
-        return False, "Planilha aberta no Excel. Feche-a e tente novamente."
-    except Exception as e:
-        wb.close()
-        return False, f"Erro ao salvar: {e}"
 
-    wb.close()
-    return True, (
-        f"{len(dados)} linhas × {max_cols_real} colunas coladas em "
-        f"'{sheet_nome}!{celula}'"
-    )
+    limite, _ = intervalo(datetime.now(), passo_min)
+    limite = limite.time()
+
+    def ler_tabela(c_ini, c_fim):
+        cab = linhas[0] if linhas else []
+        headers = [_fmt_celula(cab[c]) if c < len(cab) else "" for c in range(c_ini, c_fim + 1)]
+        rows = []
+        for lin in linhas[1:]:
+            hora = _como_hora(lin[c_ini]) if c_ini < len(lin) else None
+            if hora is None or hora >= limite:
+                break
+            rows.append([_fmt_celula(lin[c]) if c < len(lin) else "" for c in range(c_ini, c_fim + 1)])
+        return headers, rows
+
+    headers_wa, rows_wa = ler_tabela(9, 11)
+    headers_as, rows_as = ler_tabela(14, 16)
+
+    if not rows_wa and not rows_as:
+        sem_calculo = len(linhas) > 1 and all(v is None for v in linhas[1][9:12])
+        if sem_calculo:
+            return False, ("A aba RESUMO está sem valores calculados. Abra a planilha no Excel, "
+                           "salve e tente de novo.")
+        return False, f"Nenhum intervalo fechado antes de {limite:%H:%M}."
+
+    def tabela_html(titulo, headers, rows):
+        if not rows:
+            return ""
+        partes = [f'<p><b><i>{titulo}:</i></b></p>',
+                  '<table border="1" cellpadding="4" cellspacing="0" '
+                  'style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:10pt;">',
+                  '<tr style="background-color:#4472C4;color:white;font-weight:bold;">']
+        partes += [f'<td style="padding:4px 8px;">{h}</td>' for h in headers]
+        partes.append('</tr>')
+        for i, row in enumerate(rows):
+            bg = "#D9E2F3" if i % 2 == 0 else "#FFFFFF"
+            partes.append(f'<tr style="background-color:{bg};">')
+            partes += [f'<td style="padding:4px 8px;">{v}</td>' for v in row]
+            partes.append('</tr>')
+        partes.append('</table>')
+        return "\n".join(partes)
+
+    corpo = ('<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#333;">\n'
+             + tabela_html("WhatsApp", headers_wa, rows_wa)
+             + '<br>\n'
+             + tabela_html("WhatsApp After Sales", headers_as, rows_as)
+             + '</div>')
+    return True, corpo
+
 
 class Rolagem(tk.Frame):
     def __init__(self, parent, bg=C.INK, estilo="WFM.Vertical.TScrollbar"):
@@ -2108,10 +2073,16 @@ class Rolagem(tk.Frame):
         self.inner = tk.Frame(self.canvas, bg=bg)
         self.win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(self.win, width=e.width))
+        self._larg = None
+        self.canvas.bind("<Configure>", self._ajustar_largura)
         self.canvas.configure(yscrollcommand=self.sb.set)
         self.sb.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
+
+    def _ajustar_largura(self, e):
+        if e.width != self._larg:
+            self._larg = e.width
+            self.canvas.itemconfigure(self.win, width=e.width)
 
     def rolar(self, passos):
         if self.canvas.yview() != (0.0, 1.0):
@@ -2165,26 +2136,92 @@ def preencher_campo(cp, valor):
 
 def ler_corpo_email_outlook(assunto, remetente=None):
     if not OUTLOOK_OK:
-        return False, "win32com não instalado. Execute: pip install pywin32"
+        return False, MOTIVO_SEM_OUTLOOK
     try:
-        outlook = win32com.client.Dispatch("Outlook.Application")
-        ns = outlook.GetNamespace("MAPI")
-        inbox = ns.GetDefaultFolder(6)
-        items = inbox.Items
-        items.Sort("[ReceivedTime]", True)
-        for item in items:
-            try:
-                if assunto.lower() not in (item.Subject or "").lower():
-                    continue
-                if remetente and remetente.lower() not in (item.SenderName or "").lower():
-                    continue
-                return True, {"assunto": item.Subject, "html": item.HTMLBody,
-                              "recebido": item.ReceivedTime}
-            except Exception:
-                continue
-        return False, f"Nenhum e-mail encontrado com o assunto '{assunto}'."
+        _, inbox = _outlook_inbox()
+        item = _buscar_email(inbox, assunto, remetente)
+        if item is None:
+            return False, f"Nenhum e-mail encontrado com o assunto '{assunto}'."
+        return True, {"assunto": item.Subject, "html": item.HTMLBody, "recebido": item.ReceivedTime}
     except Exception as e:
+        logging.exception("Falha ao ler e-mail")
         return False, f"Erro ao acessar Outlook: {e}"
+
+
+def _colunas_planas(df):
+    cols = []
+    for c in df.columns:
+        partes = c if isinstance(c, tuple) else (c,)
+        nome = next((str(p) for p in reversed(partes) if not str(p).startswith("Unnamed")), "")
+        cols.append(" ".join(nome.split()).lower())
+    return cols
+
+
+def _titulo_tabela(df):
+    c = df.columns[0]
+    return str(c[0]).lower() if isinstance(c, tuple) else ""
+
+
+def _hora_curta(txt):
+    m = _RE_HORA.match(str(txt).strip())
+    if not m:
+        return None
+    h, mi = int(m.group(1)), int(m.group(2))
+    return f"{h}h{mi:02d}" if mi else f"{h}h"
+
+
+def _num(valor):
+    try:
+        v = float(str(valor).replace(",", "."))
+        return None if v != v else v
+    except (TypeError, ValueError):
+        return None
+
+
+def _descrever_intervalos(selecionados, validos):
+    if not selecionados:
+        return "nenhum intervalo"
+    if len(selecionados) == len(validos):
+        return "todos os intervalos"
+    faltam = [l for l in validos if l not in selecionados]
+    if len(validos) >= 5 and len(faltam) <= 2:
+        return "todos os intervalos exceto " + juntar([l["hora"] for l in faltam])
+    return juntar([l["hora"] for l in selecionados])
+
+
+def _campos_por_intervalo(linhas):
+    validas = [l for l in linhas if l["hora"] and (l["rec"] or 0) > 0]
+    campos = {}
+    for chave, pref in (("dvol", "vol"), ("daht", "aht")):
+        positivos = [l for l in validas if (l[chave] or 0) > 0]
+        campos[f"intervalos_{pref}"] = _descrever_intervalos(positivos, validas)
+        ordem = sorted(positivos, key=lambda l: l[chave], reverse=True)
+        if ordem:
+            campos[f"maior_{pref}_hora"] = ordem[0]["hora"]
+            campos[f"maior_{pref}_pct"] = _fmt_pct(ordem[0][chave])
+        if len(ordem) > 1:
+            campos[f"segundo_{pref}_hora"] = ordem[1]["hora"]
+            campos[f"segundo_{pref}_pct"] = _fmt_pct(ordem[1][chave])
+    com_sla = [l for l in validas if l["sla"] is not None]
+    if com_sla:
+        menor = min(com_sla, key=lambda l: l["sla"])
+        campos["menor_ns_hora"] = menor["hora"]
+        campos["menor_ns_pct"] = _fmt_pct(menor["sla"])
+    return campos
+
+
+def _linhas_intervalo(df, cols, c_rec, c_dvol, c_daht, c_sla):
+    linhas = []
+    for vals in df.itertuples(index=False):
+        vals = list(vals)
+        hora = _hora_curta(vals[0])
+        if not hora:
+            continue
+        linhas.append({"hora": hora, "rec": _num(vals[c_rec]),
+                       "dvol": _pct_para_float(vals[c_dvol]),
+                       "daht": _pct_para_float(vals[c_daht]),
+                       "sla": _pct_para_float(vals[c_sla])})
+    return linhas
 
 
 def extrair_sla_pontual(html, tipo):
@@ -2198,73 +2235,564 @@ def extrair_sla_pontual(html, tipo):
     except Exception as e:
         return False, f"Não li as tabelas do e-mail: {e}"
 
-    def norm(s):
-        return " ".join(str(s).split()).strip().lower()
-
-    def matriz(df):
-        linhas = [[str(c) for c in df.columns.tolist()]]
-        for _, row in df.iterrows():
-            linhas.append(["" if pd.isna(v) else str(v) for v in row.tolist()])
-        return linhas
-
-    canais = {}
-    for df in tabelas:
-        m = matriz(df)
-        h = next((i for i, lin in enumerate(m) if any(norm(c) == "canal" for c in lin)), None)
-        if h is None:
-            continue
-        header = m[h]
-        col_canal = next((j for j, c in enumerate(header) if norm(c) == "canal"), None)
-        col_sla = next((j for j, c in enumerate(header) if norm(c) == "sla"), None)
-        col_vol = next((j for j, c in enumerate(header)
-                        if norm(c) in ("% desvio forecast", "%desvio forecast", "desvio forecast")), None)
-        if col_canal is None or col_sla is None:
-            continue
-        for lin in m[h + 1:]:
-            if col_canal >= len(lin):
-                continue
-            nome = norm(lin[col_canal])
-            if not nome or nome == "nan":
-                continue
-            if "sac" in nome:
-                chave = "SAC & Sinistro"
-            elif "portal" in nome:
-                chave = "Portal Segurado"
-            elif "total" in nome:
-                chave = "Total"
-            else:
-                chave = lin[col_canal].strip()
-            canais[chave] = {
-                "sla": _pct_para_float(lin[col_sla]) if col_sla < len(lin) else None,
-                "desvio_vol": _pct_para_float(lin[col_vol]) if col_vol is not None and col_vol < len(lin) else None,
-            }
-        break
-
-    if not canais:
-        return False, "Não encontrei a tabela de SLA por canal no e-mail."
+    canais, linhas, total = {}, [], None
 
     if tipo == "justificativa_chat":
-        ref = canais.get("SAC & Sinistro") or canais.get("Total")
+        for df in tabelas:
+            cols = _colunas_planas(df)
+            if "canal" in cols and "sla" in cols and not canais:
+                c_canal, c_sla = cols.index("canal"), cols.index("sla")
+                c_dvol = cols.index("% desvio forecast") if "% desvio forecast" in cols else None
+                c_daht = cols.index("% desvio tma") if "% desvio tma" in cols else None
+                for vals in df.itertuples(index=False):
+                    vals = list(vals)
+                    nome = " ".join(str(vals[c_canal]).split()).lower()
+                    chave = ("SAC & Sinistro" if "sac" in nome else "Portal Segurado" if "portal segurado" in nome
+                             else "Total" if "total" in nome else None)
+                    if chave:
+                        canais[chave] = {
+                            "sla": _pct_para_float(vals[c_sla]),
+                            "desvio_vol": _pct_para_float(vals[c_dvol]) if c_dvol is not None else None,
+                            "desvio_aht": _pct_para_float(vals[c_daht]) if c_daht is not None else None}
+            elif cols and cols[0] == "intervalos" and "sac" in _titulo_tabela(df) and not linhas:
+                if all(c in cols for c in ("recebidas", "% desvio forecast", "% desvio tma", "sla")):
+                    linhas = _linhas_intervalo(df, cols, cols.index("recebidas"), cols.index("% desvio forecast"),
+                                               cols.index("% desvio tma"), cols.index("sla"))
+        total = canais.get("SAC & Sinistro") or canais.get("Total")
     else:
-        ref = canais.get("Total") or next(iter(canais.values()))
+        for df in tabelas:
+            cols = _colunas_planas(df)
+            if all(c in cols for c in ("% sla", "% desvio", "% desvio tmo", "recebidas")):
+                c_sla, c_dvol = cols.index("% sla"), cols.index("% desvio")
+                c_daht, c_rec = cols.index("% desvio tmo"), cols.index("recebidas")
+                for vals in df.itertuples(index=False):
+                    vals = list(vals)
+                    rotulo = str(vals[0]).strip().lower()
+                    if rotulo in ("intervalos", "total"):
+                        total = {"sla": _pct_para_float(vals[c_sla]),
+                                 "desvio_vol": _pct_para_float(vals[c_dvol]),
+                                 "desvio_aht": _pct_para_float(vals[c_daht])}
+                linhas = _linhas_intervalo(df, cols, c_rec, c_dvol, c_daht, c_sla)
+                canais["Total"] = total
+                break
 
-    sla = ref.get("sla") if ref else None
-    desvio_vol = ref.get("desvio_vol") if ref else None
-    abaixo = (sla < 80.0) if sla is not None else None
+    if not total or total.get("sla") is None:
+        return False, "Não encontrei a tabela de SLA no e-mail."
+
+    sla = total["sla"]
+    abaixo = sla < 80.0
+    campos = _campos_por_intervalo(linhas)
+    if total.get("desvio_vol") is not None:
+        campos["desvio_vol"] = _fmt_pct(total["desvio_vol"])
+    if total.get("desvio_aht") is not None:
+        campos["desvio_aht"] = _fmt_pct(total["desvio_aht"])
 
     partes = [f"{nome}: SLA {_fmt_pct(canais[nome]['sla'])}%"
               for nome in ("SAC & Sinistro", "Portal Segurado", "Total")
-              if nome in canais and canais[nome].get("sla") is not None]
-    resumo = " · ".join(partes) if partes else "SLA lido do e-mail."
-    if abaixo is True:
-        resumo += " — abaixo de 80%, justificar."
-    elif abaixo is False:
-        resumo += " — no alvo."
-    curto = (f"SLA {_fmt_pct(sla)}%" if sla is not None else "SLA lido") + \
-            (" (abaixo de 80%)" if abaixo else "")
+              if canais.get(nome) and canais[nome].get("sla") is not None]
+    resumo = " · ".join(partes)
+    resumo += " — abaixo de 80%, justificar." if abaixo else " — no alvo."
+    portal = canais.get("Portal Segurado")
+    if tipo == "justificativa_chat" and portal and portal.get("sla") is not None and portal["sla"] < 80:
+        resumo += " Atenção: Portal Segurado abaixo de 80%; ajuste o texto do Portal."
+    curto = f"SLA {_fmt_pct(sla)}%" + (" (abaixo de 80%)" if abaixo else "")
 
-    return True, {"canais": canais, "sla": sla, "desvio_vol": desvio_vol,
-                  "abaixo": abaixo, "resumo": resumo, "resumo_curto": curto}
+    return True, {"canais": canais, "sla": sla, "desvio_vol": total.get("desvio_vol"),
+                  "abaixo": abaixo, "campos": campos, "intervalos": len(linhas),
+                  "resumo": resumo, "resumo_curto": curto}
+
+
+# ── Célula 14.1 (código) ────────────────────────────────────────────────
+# ============================================================
+# CAIXA DE ENTRADA — STATUS DE RESPOSTA E MONTAGEM DE E-MAIL
+#
+# Cada verificação com a chave "modo" é acompanhada no Outlook:
+#
+#   modo "responder": chega um e-mail (ex.: pontual Cardif) e é
+#       preciso responder. Status = recebido hoje? já respondido
+#       (por você ou por outra pessoa)?
+#
+#   modo "thread": você envia atualizações no thread do dia
+#       (ex.: "Report Pontual - Accor - 29/10"). Status = thread
+#       existe? quando foi seu último envio? passou do ciclo?
+#
+# Chaves usadas (em OPERACOES ou no config_verificacoes.json):
+#   assunto            trecho fixo do assunto (sem data/hora)
+#   remetente          parte do nome ou e-mail de quem envia (responder)
+#   assunto_novo       assunto do e-mail do dia, com {data} (thread)
+#   dias_referencia    0 = data de hoje no assunto, -1 = ontem (thread)
+#   ciclo_min          minutos entre envios; 0 = uma vez por dia (thread)
+#   manter_historico   False = responde sem o histórico do thread
+#   corpo              texto inicial do e-mail ({data}, {hora}, {saudacao})
+#   blocos_excel       [{"titulo","planilha","aba","intervalo","como"}]
+#                      como = "imagem" ou "tabela"
+# ============================================================
+
+PR_LAST_VERB = "http://schemas.microsoft.com/mapi/proptag/0x10810003"
+PR_LAST_VERB_TIME = "http://schemas.microsoft.com/mapi/proptag/0x10820040"
+_PREFIXOS = ("re:", "res:", "enc:", "fw:", "fwd:", "tr:", "rv:", "aw:", "wg:")
+_STATUS_CACHE = {}
+_STATUS_LOCK = threading.Lock()
+
+
+def chave_verificacao(nome_op, vf):
+    return vf.get("id") or f"{nome_op}::{vf['nome']}"
+
+
+def _dt_local(t):
+    return datetime(t.year, t.month, t.day, t.hour, t.minute, t.second)
+
+
+def _sem_prefixo(assunto):
+    s = (assunto or "").strip()
+    mudou = True
+    while mudou:
+        mudou = False
+        for p in _PREFIXOS:
+            if s.lower().startswith(p):
+                s = s[len(p):].strip()
+                mudou = True
+    return s
+
+
+def _eh_resposta(assunto):
+    return (assunto or "").strip().lower().startswith(_PREFIXOS)
+
+
+def _remetente_txt(item):
+    partes = [getattr(item, "SenderName", "") or "", getattr(item, "SenderEmailAddress", "") or ""]
+    try:
+        if (item.SenderEmailType or "").upper() == "EX":
+            usuario = item.Sender.GetExchangeUser()
+            if usuario is not None:
+                partes.append(usuario.PrimarySmtpAddress or "")
+    except Exception:
+        pass
+    return " ".join(partes).lower()
+
+
+def _saudacao(agora=None):
+    h = (agora or datetime.now()).hour
+    return "Bom dia" if h < 12 else "Boa tarde" if h < 18 else "Boa noite"
+
+
+def _fmt_ha(minutos):
+    minutos = int(minutos)
+    if minutos < 60:
+        return f"{minutos} min"
+    return f"{minutos // 60}h{minutos % 60:02d}"
+
+
+class _Caixa:
+    def __init__(self):
+        pythoncom.CoInitialize()
+        self.outlook = win32com.client.Dispatch("Outlook.Application")
+        self.ns = self.outlook.GetNamespace("MAPI")
+        self.inbox = self.ns.GetDefaultFolder(6)
+        self.enviados = self.ns.GetDefaultFolder(5)
+
+    def fechar(self):
+        self.outlook = self.ns = self.inbox = self.enviados = None
+        pythoncom.CoUninitialize()
+
+    def itens(self, pasta, trecho, dias=3, de_mim=False):
+        colecao = pasta.Items
+        try:
+            colecao = colecao.Restrict(
+                "@SQL=\"urn:schemas:httpmail:subject\" LIKE '%" + trecho.replace("'", "''") + "%'")
+        except Exception:
+            logging.warning("Restrict indisponível em %s", pasta.Name)
+        campo = "[SentOn]" if de_mim else "[ReceivedTime]"
+        colecao.Sort(campo, True)
+        corte = datetime.now() - timedelta(days=dias)
+        saida = []
+        for item in colecao:
+            try:
+                if getattr(item, "Class", 43) != 43:
+                    continue
+                quando = _dt_local(item.SentOn if de_mim else item.ReceivedTime)
+                if quando < corte:
+                    break
+                if trecho.lower() not in (item.Subject or "").lower():
+                    continue
+                saida.append({"item": item, "assunto": item.Subject or "", "quando": quando, "de_mim": de_mim,
+                              "nome": "você" if de_mim else (item.SenderName or "")})
+            except Exception:
+                continue
+        return saida
+
+    def status_responder(self, vf):
+        trecho = vf["assunto_referencia"]
+        remetente = (vf.get("remetente") or "").lower()
+        hoje = datetime.now().date()
+        recebidos = [x for x in self.itens(self.inbox, trecho, dias=1)
+                     if not _eh_resposta(x["assunto"]) and x["quando"].date() == hoje
+                     and (not remetente or remetente in _remetente_txt(x["item"]))]
+        if not recebidos:
+            return {"estado": "vazio", "texto": "Nenhum e-mail recebido hoje"}
+        orig = recebidos[0]
+        item, quando = orig["item"], orig["quando"]
+        alvo = {"entry": item.EntryID, "store": item.Parent.StoreID, "assunto": orig["assunto"]}
+        base = {"alvo": alvo, "recebido": quando, "assunto": orig["assunto"]}
+
+        try:
+            verbo = item.PropertyAccessor.GetProperty(PR_LAST_VERB)
+            if verbo in (102, 103):
+                try:
+                    q = _dt_local(item.PropertyAccessor.UTCToLocalTime(
+                        item.PropertyAccessor.GetProperty(PR_LAST_VERB_TIME)))
+                except Exception:
+                    q = None
+                hora = f" às {q:%H:%M}" if q else ""
+                return {**base, "estado": "ok", "texto": f"Respondido por você{hora}"}
+        except Exception:
+            pass
+
+        assunto_orig = _sem_prefixo(orig["assunto"])
+        for x in self.itens(self.enviados, assunto_orig, dias=1, de_mim=True):
+            if x["quando"] >= quando and _eh_resposta(x["assunto"]):
+                return {**base, "estado": "ok", "texto": f"Respondido por você às {x['quando']:%H:%M}"}
+        for x in self.itens(self.inbox, assunto_orig, dias=1):
+            if x["quando"] >= quando and _eh_resposta(x["assunto"]):
+                return {**base, "estado": "ok", "texto": f"Respondido por {x['nome']} às {x['quando']:%H:%M}"}
+
+        espera = (datetime.now() - quando).total_seconds() / 60
+        return {**base, "estado": "pendente",
+                "texto": f"Recebido às {quando:%H:%M} · sem resposta há {_fmt_ha(espera)}"}
+
+    def status_thread(self, vf):
+        trecho = vf["assunto_referencia"]
+        data_ref = (datetime.now() + timedelta(days=vf.get("dias_referencia", 0))).strftime("%d/%m")
+        todos = (self.itens(self.enviados, trecho, dias=7, de_mim=True)
+                 + self.itens(self.inbox, trecho, dias=7))
+        todos.sort(key=lambda x: x["quando"], reverse=True)
+        do_dia = [x for x in todos if data_ref in x["assunto"]]
+        base = {"data_ref": data_ref}
+
+        if not do_dia:
+            modelo = todos[0] if todos else None
+            if modelo:
+                base["modelo"] = {"entry": modelo["item"].EntryID, "store": modelo["item"].Parent.StoreID}
+            return {**base, "estado": "pendente", "texto": f"Thread de {data_ref} ainda não existe"}
+
+        ultimo = do_dia[0]
+        base["alvo"] = {"entry": ultimo["item"].EntryID, "store": ultimo["item"].Parent.StoreID,
+                        "assunto": ultimo["assunto"]}
+        meus = [x for x in do_dia if x["de_mim"]]
+        if not meus:
+            return {**base, "estado": "pendente",
+                    "texto": f"Último no thread às {ultimo['quando']:%H:%M} ({ultimo['nome']}) · você ainda não enviou"}
+        meu = meus[0]["quando"]
+        ciclo = int(vf.get("ciclo_min") or 0)
+        decorrido = (datetime.now() - meu).total_seconds() / 60
+        if ciclo and decorrido >= ciclo:
+            return {**base, "estado": "pendente",
+                    "texto": f"Seu último envio às {meu:%H:%M}, há {_fmt_ha(decorrido)} (ciclo de {ciclo} min)"}
+        texto = f"Enviado por você às {meu:%H:%M}"
+        if ciclo:
+            texto += f" · próximo até {meu + timedelta(minutes=ciclo):%H:%M}"
+        return {**base, "estado": "ok", "texto": texto}
+
+    def status(self, vf):
+        if vf.get("modo") == "thread":
+            return self.status_thread(vf)
+        return self.status_responder(vf)
+
+
+def consultar_caixa(pares):
+    if not OUTLOOK_OK:
+        return {chave: {"estado": "erro", "texto": MOTIVO_SEM_OUTLOOK} for chave, _ in pares}
+    resultado = {}
+    try:
+        caixa = _Caixa()
+    except Exception as e:
+        logging.exception("Outlook indisponível")
+        return {chave: {"estado": "erro", "texto": f"Outlook indisponível: {e}"} for chave, _ in pares}
+    try:
+        for chave, vf in pares:
+            try:
+                r = caixa.status(vf)
+            except Exception as e:
+                logging.exception("Falha ao consultar %s", chave)
+                r = {"estado": "erro", "texto": f"Erro ao consultar: {e}"}
+            r["em"] = datetime.now()
+            resultado[chave] = r
+            with _STATUS_LOCK:
+                _STATUS_CACHE[chave] = r
+    finally:
+        caixa.fechar()
+    return resultado
+
+
+def status_em_cache(chave, idade_max=180):
+    with _STATUS_LOCK:
+        r = _STATUS_CACHE.get(chave)
+    if r and (datetime.now() - r["em"]).total_seconds() <= idade_max:
+        return r
+    return None
+
+
+def verificacoes_monitoradas():
+    return [(nome, vf) for nome, d in OPERACOES.items()
+            for vf in d.get("verificacoes_email", []) if vf.get("modo")]
+
+
+def _texto_email(vf, agora=None):
+    agora = agora or datetime.now()
+    data_ref = (agora + timedelta(days=vf.get("dias_referencia", 0))).strftime("%d/%m")
+    modelo = vf.get("corpo") or "{saudacao}!\n\nSegue atualização.\n\nQualquer dúvida estou à disposição."
+    try:
+        return modelo.format(saudacao=_saudacao(agora), data=data_ref, hora=agora.strftime("%H:%M"))
+    except (KeyError, IndexError, ValueError):
+        return modelo
+
+
+def _excel_para_copiar(caminho):
+    try:
+        ativo = win32com.client.GetActiveObject("Excel.Application")
+        for w in ativo.Workbooks:
+            if _mesmo_arquivo(w.FullName, caminho) or w.Name.lower() == os.path.basename(caminho).lower():
+                return ativo, w, False
+    except Exception:
+        pass
+    xl = win32com.client.DispatchEx("Excel.Application")
+    xl.Visible = False
+    xl.DisplayAlerts = False
+    xl.AskToUpdateLinks = False
+    xl.AutomationSecurity = 3
+    wb = xl.Workbooks.Open(caminho, UpdateLinks=0, ReadOnly=True)
+    return xl, wb, True
+
+
+def _inserir_no_inicio(doc, texto):
+    doc.Range(0, 0).InsertBefore(texto.replace("\r\n", "\n").replace("\n", "\r"))
+
+
+def _colar_bloco(doc, rng, como_tabela):
+    ultimo = None
+    for tentativa in range(3):
+        try:
+            if como_tabela:
+                rng.Copy()
+                time.sleep(0.2)
+                doc.Range(0, 0).PasteExcelTable(False, False, False)
+            else:
+                rng.CopyPicture(1 if tentativa == 0 else 2, 2)
+                time.sleep(0.2)
+                doc.Range(0, 0).Paste()
+            return
+        except Exception as e:
+            ultimo = e
+            time.sleep(0.4)
+    raise ultimo
+
+
+def montar_email_outlook(vf, status, texto, blocos=None, enviar=False):
+    if not OUTLOOK_OK:
+        return False, MOTIVO_SEM_OUTLOOK
+    pythoncom.CoInitialize()
+    abertos = []
+    avisos = []
+    try:
+        outlook = win32com.client.Dispatch("Outlook.Application")
+        ns = outlook.GetNamespace("MAPI")
+        alvo = (status or {}).get("alvo")
+        modelo = (status or {}).get("modelo")
+        if alvo:
+            mail = ns.GetItemFromID(alvo["entry"], alvo["store"]).ReplyAll()
+        else:
+            mail = outlook.CreateItem(0)
+            if modelo:
+                rascunho = ns.GetItemFromID(modelo["entry"], modelo["store"]).ReplyAll()
+                for r in rascunho.Recipients:
+                    novo = mail.Recipients.Add(r.Address)
+                    novo.Type = r.Type
+                mail.Recipients.ResolveAll()
+            data_ref = (status or {}).get("data_ref") or datetime.now().strftime("%d/%m")
+            mail.Subject = (vf.get("assunto_novo") or vf["assunto_referencia"] + " - {data}").format(data=data_ref)
+
+        doc = None
+        try:
+            doc = mail.GetInspector.WordEditor
+        except Exception:
+            logging.exception("WordEditor indisponível")
+
+        if doc is None:
+            mail.HTMLBody = _texto_para_html(texto) + ("" if not alvo or not vf.get("manter_historico") else mail.HTMLBody)
+        else:
+            if alvo and not vf.get("manter_historico", False):
+                try:
+                    doc.Bookmarks("_MailOriginal").Range.Delete()
+                except Exception:
+                    pass
+            livros = {}
+            for bloco in reversed(blocos or []):
+                try:
+                    caminho = bloco["planilha"]
+                    if not os.path.exists(caminho):
+                        avisos.append(f"Planilha não encontrada: {os.path.basename(caminho)}")
+                        continue
+                    if caminho not in livros:
+                        livros[caminho] = _excel_para_copiar(caminho)
+                        if livros[caminho][2]:
+                            abertos.append(livros[caminho][:2])
+                    wb = livros[caminho][1]
+                    rng = wb.Worksheets(bloco["aba"]).Range(bloco["intervalo"])
+                    _inserir_no_inicio(doc, "\n")
+                    _colar_bloco(doc, rng, bloco.get("como") == "tabela")
+                    if bloco.get("titulo"):
+                        _inserir_no_inicio(doc, f"\n{bloco['titulo']}:\n")
+                except Exception as e:
+                    logging.exception("Falha no bloco %s", bloco)
+                    avisos.append(f"Bloco '{bloco.get('titulo') or bloco.get('intervalo')}': {e}")
+            _inserir_no_inicio(doc, texto.rstrip() + "\n\n")
+
+        if enviar:
+            mail.Send()
+            msg = "E-mail enviado pelo Outlook."
+        else:
+            mail.Display()
+            msg = "Rascunho aberto no Outlook para revisão."
+        if avisos:
+            msg += " Atenção: " + "; ".join(avisos)
+        return True, msg
+    except Exception as e:
+        logging.exception("Falha ao montar e-mail")
+        return False, f"Erro ao montar o e-mail: {e}"
+    finally:
+        for xl, wb in abertos:
+            try:
+                wb.Close(SaveChanges=False)
+                xl.Quit()
+            except Exception:
+                pass
+        pythoncom.CoUninitialize()
+
+
+def ler_html_alvo(alvo):
+    if not OUTLOOK_OK:
+        return False, MOTIVO_SEM_OUTLOOK
+    pythoncom.CoInitialize()
+    try:
+        ns = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+        item = ns.GetItemFromID(alvo["entry"], alvo["store"])
+        return True, {"assunto": item.Subject, "html": item.HTMLBody, "recebido": _dt_local(item.ReceivedTime)}
+    except Exception as e:
+        logging.exception("Falha ao abrir e-mail")
+        return False, f"Erro ao abrir o e-mail: {e}"
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def abrir_email_alvo(alvo):
+    if not OUTLOOK_OK:
+        return False, MOTIVO_SEM_OUTLOOK
+    try:
+        ns = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+        ns.GetItemFromID(alvo["entry"], alvo["store"]).Display()
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+# ============================================================
+# CONFIGURAÇÃO DE VERIFICAÇÕES POR E-MAIL (arquivo compartilhado)
+# Fica ao lado da pasta Users_RTA, valendo para toda a equipe.
+# ============================================================
+
+ARQ_CONFIG_EMAILS = RAIZ_APP / "config_verificacoes.json"
+
+CORES_NOVAS = ["#F28FB0", "#9BD35F", "#5FB8D3", "#D39B5F", "#B38BFF", "#5FD3A6"]
+
+CONFIG_EMAILS_PADRAO = [
+    {"id": "accor-pontual", "operacao": "Accor", "nome": "Report Pontual",
+     "descricao": "Pontual consolidado no thread do dia", "modo": "thread",
+     "assunto": "Report Pontual - Accor", "assunto_novo": "Report Pontual - Accor - {data}",
+     "dias_referencia": 0, "ciclo_min": 60, "manter_historico": False,
+     "corpo": "Caros,\n\n{saudacao}!\n\nSegue para o seu conhecimento o relatório do Pontual Report "
+              "consolidado atualizado até o momento.\n\nImpactos:\n[preencher]\n\n"
+              "Qualquer dúvida estou à disposição.",
+     "blocos_excel": [],
+     "checklist": ["Atualizar a planilha da Accor", "Revisar os impactos por célula",
+                   "Conferir imagens e tabelas no rascunho", "Enviar no thread do dia"]},
+    {"id": "accor-cc-hora", "operacao": "Accor", "nome": "Customer Care - Hora x Hora",
+     "descricao": "Hora x Hora do Customer Care no thread do dia", "modo": "thread",
+     "assunto": "Accor Customer Care - Hora x Hora", "assunto_novo": "Accor Customer Care - Hora x Hora - {data}",
+     "dias_referencia": 0, "ciclo_min": 60, "manter_historico": False,
+     "corpo": "Caros\n\n{saudacao}!\n\nSegue para o seu conhecimento o relatório do Pontual Report "
+              "atualizado até o momento.\n\nImpactos:\n[preencher]\n\nQualquer dúvida estou à disposição.",
+     "blocos_excel": [],
+     "checklist": ["Atualizar backlog e intraday", "Revisar os impactos",
+                   "Conferir imagens e tabelas no rascunho", "Enviar no thread do dia"]},
+    {"id": "citibank-fechamento", "operacao": "CitiBank", "nome": "Relatório Fechamento",
+     "descricao": "Fechamento do dia anterior", "modo": "thread",
+     "assunto": "Relatório Fechamento -  Citibank", "assunto_novo": "Relatório Fechamento -  Citibank - {data}",
+     "dias_referencia": -1, "ciclo_min": 0, "manter_historico": False,
+     "corpo": "{saudacao} a todos!\n\nSegue abaixo o relatório de volumetria:\n\n{data}:",
+     "blocos_excel": [],
+     "checklist": ["Atualizar a planilha do Citibank", "Conferir intervalos impactados",
+                   "Conferir imagens e tabelas no rascunho", "Enviar"]},
+]
+
+
+def carregar_config_emails():
+    if not ARQ_CONFIG_EMAILS.exists():
+        try:
+            salvar_config_emails(CONFIG_EMAILS_PADRAO)
+        except OSError:
+            return [dict(c) for c in CONFIG_EMAILS_PADRAO]
+    try:
+        with open(ARQ_CONFIG_EMAILS, "r", encoding="utf-8") as f:
+            dados = json.load(f)
+        return dados if isinstance(dados, list) else []
+    except (OSError, ValueError):
+        logging.exception("config_verificacoes.json inválido")
+        return []
+
+
+def salvar_config_emails(lista):
+    tmp = str(ARQ_CONFIG_EMAILS) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(lista, f, ensure_ascii=False, indent=2)
+    if ARQ_CONFIG_EMAILS.exists():
+        shutil.copy2(ARQ_CONFIG_EMAILS, str(ARQ_CONFIG_EMAILS) + ".bak")
+    os.replace(tmp, ARQ_CONFIG_EMAILS)
+
+
+def _verificacao_de_config(cfg):
+    return {
+        "id": cfg["id"], "origem": "config",
+        "nome": cfg["nome"], "descricao": cfg.get("descricao") or cfg["nome"],
+        "remetente": cfg.get("remetente", ""), "assunto_referencia": cfg["assunto"],
+        "tipo": "email", "modo": cfg.get("modo", "responder"),
+        "assunto_novo": cfg.get("assunto_novo", ""), "dias_referencia": int(cfg.get("dias_referencia", 0)),
+        "ciclo_min": int(cfg.get("ciclo_min", 0)), "manter_historico": bool(cfg.get("manter_historico", False)),
+        "corpo": cfg.get("corpo", ""), "blocos_excel": cfg.get("blocos_excel", []),
+        "checklist": cfg.get("checklist") or ["Revisar o rascunho no Outlook", "Enviar"],
+    }
+
+
+def aplicar_config_emails(lista=None):
+    lista = carregar_config_emails() if lista is None else lista
+    for d in OPERACOES.values():
+        d["verificacoes_email"] = [v for v in d.get("verificacoes_email", []) if v.get("origem") != "config"]
+    for i, cfg in enumerate(lista):
+        nome_op = (cfg.get("operacao") or "").strip()
+        if not nome_op or not cfg.get("nome") or not cfg.get("assunto"):
+            continue
+        if nome_op not in OPERACOES:
+            OPERACOES[nome_op] = {
+                "cor": cfg.get("cor") or CORES_NOVAS[i % len(CORES_NOVAS)], "icone": "🔵",
+                "descricao": "Verificações de e-mail", "sistema": "Outlook",
+                "horario": cfg.get("horario") or "08:00 – 20:00",
+                "bases": {}, "verificacoes_email": [], "origem": "config"}
+        cfg.setdefault("id", f"{nome_op}-{cfg['nome']}".lower().replace(" ", "-"))
+        OPERACOES[nome_op]["verificacoes_email"].append(_verificacao_de_config(cfg))
+    for nome in [n for n, d in OPERACOES.items() if d.get("origem") == "config" and not d["verificacoes_email"]]:
+        OPERACOES.pop(nome)
+
+
+aplicar_config_emails()
 
 
 # ── Célula 15 (markdown) ────────────────────────────────────────────────
@@ -2299,6 +2827,10 @@ class WFMApp:
 
         self.ativo, self.nome_op, self._ult_int = "home", None, None
         self.toast = Toaster(self.root)
+        self.root.report_callback_exception = self._erro_callback
+        self.root.bind("<F5>", lambda e: self._recarregar())
+        self._pend_avisados = set()
+        self.root.after(20000, self._poll_emails)
         self._montar_sidebar()
         self._montar_topo()
         self.body = Rolagem(self.main)
@@ -2318,6 +2850,37 @@ class WFMApp:
                                icon="question", parent=self.root):
             self.root.destroy()
 
+    def _erro_callback(self, exc, val, tb):
+        logging.error("Erro na interface", exc_info=(exc, val, tb))
+        self.toast.show("Erro inesperado", f"{val}\nDetalhes em app.log.", "err")
+
+    def _recarregar(self):
+        if self.ativo == "home":
+            self.show_home()
+        elif self.ativo == "hist":
+            self.show_historico()
+        elif self.ativo == "atalhos":
+            self.show_atalhos()
+        elif self.ativo == "cfg_emails":
+            self.show_config_emails()
+        elif self.nome_op:
+            self.show_operacao(self.nome_op)
+
+    def _poll_emails(self):
+        pares = [(chave_verificacao(n, v), v, n) for n, v in verificacoes_monitoradas()]
+        if pares and OUTLOOK_OK:
+            def fim(res):
+                pend = {k for k, r in (res or {}).items() if r.get("estado") == "pendente"}
+                ativos = {k for k, v, n in pares if k in pend and em_horario(OPERACOES[n].get("horario", ""))}
+                novos = ativos - self._pend_avisados
+                self._pend_avisados = pend
+                if novos:
+                    nomes = [f"{n} · {v['nome']}" for k, v, n in pares if k in novos]
+                    self.toast.show("E-mail aguardando ação", juntar(nomes), "warn")
+
+            run_async(self.root, lambda: consultar_caixa([(k, v) for k, v, _ in pares]), fim)
+        self.root.after(5 * 60 * 1000, self._poll_emails)
+
     def _wheel(self, e, passos=None):
         if isinstance(e.widget, tk.Text):
             return
@@ -2325,7 +2888,10 @@ class WFMApp:
             passos = -max(1, abs(e.delta) // 120) if e.delta > 0 else max(1, abs(e.delta) // 120)
 
         # Descobre o widget sob o cursor e verifica se está dentro da sidebar
-        alvo = self.root.winfo_containing(e.x_root, e.y_root)
+        try:
+            alvo = self.root.winfo_containing(e.x_root, e.y_root)
+        except (KeyError, tk.TclError):
+            return
         w = alvo
         while w is not None:
             if w is self.side:
@@ -2444,11 +3010,15 @@ class WFMApp:
             self.lbl_janela.configure(text="Todas as operações. Os pontos marcam suas ações de hoje, na cor de cada operação.")
 
     def _nav(self):
-        for w in self.nav.winfo_children():
-            w.destroy()
         cont = {}
         for _, r in hist_periodo(1):
             cont[r.get("operacao")] = cont.get(r.get("operacao"), 0) + 1
+        assinatura = (self.ativo, tuple(sorted(cont.items(), key=lambda x: str(x[0]))))
+        if assinatura == getattr(self, "_nav_assinatura", None):
+            return
+        self._nav_assinatura = assinatura
+        for w in self.nav.winfo_children():
+            w.destroy()
         self._nav_item("Painel do dia", "home", None, None, self.show_home)
         tk.Label(self.nav, text="Operações", font=fnt(9), bg=C.SIDEBAR, fg=C.MUTED,
                  anchor="w").pack(fill="x", padx=26, pady=(18, 6))
@@ -2459,6 +3029,7 @@ class WFMApp:
             self._nav_item(nome, f"op:{nome}", d["cor"], extra, cmd)
         tk.Frame(self.nav, bg=C.LINE, height=1).pack(fill="x", padx=26, pady=14)
         self._nav_item("Acesso rápido", "atalhos", None, None, self.show_atalhos)
+        self._nav_item("Configurar e-mails", "cfg_emails", None, None, lambda: self.show_config_emails())
         self._nav_item("Histórico", "hist", None, None, self.show_historico)
 
     def _nav_item(self, texto, chave, cor, extra, cmd):
@@ -2530,6 +3101,74 @@ class WFMApp:
             tk.Label(resumo, text=f"{n_prob} com problema.", font=fnt(11, "bold"), bg=C.INK,
                      fg=C.ERR, padx=6).pack(side="left")
 
+        alvos = [(nome, nb, destino_base(db), nome_arquivo(arq))
+                 for nome, d in OPERACOES.items() if em_horario(d.get("horario", ""))
+                 for nb, db in d.get("bases", {}).items()
+                 for arq in db.get("arquivos", [])]
+        if alvos:
+            secao(B, "Pendências de hoje", "bases das operações no horário sem atualização hoje")
+            pend = tk.Frame(B, bg=C.INK)
+            pend.pack(fill="x", padx=28)
+            tk.Label(pend, text="Verificando destinos...", font=fnt(9), bg=C.INK,
+                     fg=C.MUTED, anchor="w").pack(fill="x")
+
+            def mostrar_pendencias(infos):
+                if not pend.winfo_exists():
+                    return
+                for w in pend.winfo_children():
+                    w.destroy()
+                hoje_d = datetime.now().date()
+                faltam = [(a, i) for a, i in zip(alvos, infos or [])
+                          if not (i.get("existe") and i["mtime"].date() == hoje_d)]
+                if not faltam:
+                    aviso(pend, "Todas as bases das operações no horário já foram atualizadas hoje.", "ok", bg=C.INK)
+                    return
+                for (nome, nb, _, nf), info in faltam:
+                    t, c = status_destino(info)
+                    row = tk.Frame(pend, bg=C.SURFACE, padx=18, pady=8)
+                    row.pack(fill="x", pady=(0, 2))
+                    ponto(row, OPERACOES[nome]["cor"], C.SURFACE).pack(side="left")
+                    tk.Label(row, text=f"{nome} · {nb}", font=fnt(10, "bold"), bg=C.SURFACE,
+                             fg=C.TEXT, padx=10).pack(side="left")
+                    tk.Label(row, text=nf, font=fnt(9), bg=C.SURFACE, fg=C.TEXT2).pack(side="left")
+                    tk.Label(row, text=t, font=fnt(8), bg=C.SURFACE, fg=c).pack(side="right")
+                    clicavel(row, lambda n=nome: self.show_alocar(n), C.SURFACE, C.RAISED)
+
+            run_async(pend, lambda: [check_dest(dd, nf) for _, _, dd, nf in alvos], mostrar_pendencias)
+
+        mon = [(chave_verificacao(n, v), n, v) for n, v in verificacoes_monitoradas()]
+        if mon and OUTLOOK_OK:
+            secao(B, "E-mails", "status no Outlook das verificações acompanhadas")
+            cx_box = tk.Frame(B, bg=C.INK)
+            cx_box.pack(fill="x", padx=28)
+
+            def mostrar_caixa(res):
+                if not cx_box.winfo_exists():
+                    return
+                for w in cx_box.winfo_children():
+                    w.destroy()
+                ordem = {"pendente": 0, "erro": 1, "vazio": 2, "ok": 3}
+                cores_st = {"ok": C.OK, "pendente": C.WARN, "erro": C.ERR}
+                for k, n, v in sorted(mon, key=lambda p: ordem.get((res or {}).get(p[0], {}).get("estado"), 4)):
+                    st = (res or {}).get(k) or {"estado": "vazio", "texto": "sem consulta"}
+                    row = tk.Frame(cx_box, bg=C.SURFACE, padx=18, pady=8)
+                    row.pack(fill="x", pady=(0, 2))
+                    ponto(row, OPERACOES[n]["cor"], C.SURFACE).pack(side="left")
+                    tk.Label(row, text=f"{n} · {v['nome']}", font=fnt(10, "bold"), bg=C.SURFACE,
+                             fg=C.TEXT, padx=10).pack(side="left")
+                    tk.Label(row, text=st["texto"], font=fnt(9), bg=C.SURFACE,
+                             fg=cores_st.get(st["estado"], C.MUTED)).pack(side="right")
+                    idx_v = OPERACOES[n]["verificacoes_email"].index(v)
+                    clicavel(row, lambda n_=n, i_=idx_v: self.show_verificar(n_, i_), C.SURFACE, C.RAISED)
+
+            em_cache = {k: status_em_cache(k) for k, _, _ in mon}
+            if all(em_cache.values()):
+                mostrar_caixa(em_cache)
+            else:
+                tk.Label(cx_box, text="Consultando o Outlook...", font=fnt(9), bg=C.INK,
+                         fg=C.MUTED, anchor="w").pack(fill="x")
+                run_async(cx_box, lambda: consultar_caixa([(k, v) for k, _, v in mon]), mostrar_caixa)
+
         no_ar = sum(1 for d in OPERACOES.values() if op_configurada(d) and em_horario(d["horario"]))
         secao(B, "Operações", f"{no_ar} no horário agora")
         tabela = tk.Frame(B, bg=C.INK)
@@ -2593,15 +3232,6 @@ class WFMApp:
             Btn(f, "Ver histórico completo", self.show_historico, kind="ghost", size=9).pack(anchor="w")
         tk.Frame(B, bg=C.INK, height=36).pack()
 
-        # Espaçador antes do rodapé
-        tk.Frame(B, bg=C.INK, height=36).pack()
-
-        # Rodapé simples com a versão do sistema
-        f_rodape = tk.Frame(B, bg=C.INK)
-        f_rodape.pack(fill="x", padx=28, pady=(0, 12))
-        tk.Label(f_rodape, text="VERSÃO BETA 1.1", bg=C.INK, fg="gray", font=("Arial", 8)).pack(side="right")
-
-
     def show_historico(self):
         B = self._pagina("Histórico", "Últimos 200 registros de alocações e verificações.", "hist")
         filtros = {"dias": "1", "op": ""}
@@ -2633,8 +3263,6 @@ class WFMApp:
         lista.pack(fill="x")
         render()
         tk.Frame(B, bg=C.INK, height=36).pack()
-        
-       
 
     def show_atalhos(self):
         B = self._pagina("Acesso rápido",
@@ -2712,7 +3340,6 @@ class WFMApp:
         tk.Frame(B, bg=C.INK, height=36).pack()
 
 
-
 # ── Célula 17 (markdown) ────────────────────────────────────────────────
 # #### ============================================================
 # #### CÉLULA 2C — OPERAÇÃO E ALOCAR ARQUIVO
@@ -2766,13 +3393,13 @@ def _show_operacao(self, nome_op):
                 tk.Label(c1, text=f"→ {db['sheet']} ({plan_nome})", font=fnt(8),
                          bg=C.SURFACE, fg=C.MUTED, anchor="w").pack(fill="x")
             for arq in db["arquivos"]:
-                nf = f"{arq['nome_destino']}{arq['extensao']}"
+                nf = nome_arquivo(arq)
                 r = tk.Frame(c1, bg=C.SURFACE)
                 r.pack(fill="x", pady=1)
                 tk.Label(r, text=nf, font=fnt(9), bg=C.SURFACE, fg=C.TEXT2, anchor="w").pack(side="left")
                 st = tk.Label(r, text="verificando...", font=fnt(8), bg=C.SURFACE, fg=C.MUTED)
                 st.pack(side="right")
-                status_lbls.append((db["destino"], nf, st))
+                status_lbls.append((destino_base(db), nf, st))
         Btn(p1, "Alocar arquivo", lambda: self.show_alocar(nome_op), kind="primary").pack(anchor="w", pady=(16, 0))
     else:
         tk.Label(c1, text="Nenhuma base configurada para esta operação.", font=fnt(9),
@@ -2976,7 +3603,7 @@ def _show_alocar(self, nome_op):
             if tipo_aloc == "colar_planilha":
                 cauda = f"→ {db['sheet']} ({os.path.basename(db['planilha'])})"
             else:
-                cauda = "\\" + "\\".join(db["destino"].replace("/", "\\").rstrip("\\").split("\\")[-2:])
+                cauda = "\\" + "\\".join(destino_base(db).replace("/", "\\").rstrip("\\").split("\\")[-2:])
             tk.Label(t, text=cauda if len(cauda) < 60 else "..." + cauda[-55:],
                      font=fnt(8), bg=bg, fg=C.MUTED, anchor="w").pack(anchor="w")
             if not sel:
@@ -2992,10 +3619,10 @@ def _show_alocar(self, nome_op):
         render_orig()
         render_res()
         pintar_etapas()
-        dest = d["bases"][nb]["destino"]
+        dest = destino_base(d["bases"][nb])
 
         def carregar():
-            return {f"{a['nome_destino']}{a['extensao']}": check_dest(dest, f"{a['nome_destino']}{a['extensao']}")
+            return {nome_arquivo(a): check_dest(dest, nome_arquivo(a))
                     for a in arquivos}
 
         def pronto(infos):
@@ -3014,7 +3641,7 @@ def _show_alocar(self, nome_op):
         base_cfg = d["bases"][estado["base"]]
         tipo_aloc = base_cfg.get("tipo_alocacao", "mover")
         for arq in base_cfg["arquivos"]:
-            nf = f"{arq['nome_destino']}{arq['extensao']}"
+            nf = nome_arquivo(arq)
             sel = estado["arq"] is arq
             r = tk.Frame(sec_dest, bg=C.SURFACE, padx=18, pady=10, highlightthickness=2,
                          highlightbackground=cor if sel else C.SURFACE)
@@ -3134,6 +3761,9 @@ def _show_alocar(self, nome_op):
                      fg=C.OK, anchor="w").pack(anchor="w")
             tk.Label(tx, text=f"{u['de']}  →  {u['para']}", font=fnt(9), bg=C.SURFACE, fg=C.TEXT2,
                      anchor="w").pack(anchor="w")
+            if u.get("abrir") and hasattr(os, "startfile"):
+                Btn(ok, "Abrir destino", lambda p=u["abrir"]: os.startfile(p),
+                    kind="ghost", size=9, pady=4).pack(side="right")
         base, arq, orig = estado["base"], estado["arq"], estado["orig"]
         if not (base and arq and orig):
             faltam = [n for n, v in (("a base", base), ("o arquivo de destino", arq),
@@ -3141,9 +3771,9 @@ def _show_alocar(self, nome_op):
             vazio(sec_res, f"Falta escolher {juntar(faltam)}.",
                   "O resumo aparece aqui. Nada é movido até você confirmar.", padx=0)
             return
-        nf = f"{arq['nome_destino']}{arq['extensao']}"
+        nf = nome_arquivo(arq)
         base_cfg = d["bases"][base]
-        dest_dir = base_cfg["destino"]
+        dest_dir = destino_base(base_cfg)
         tipo_aloc = base_cfg.get("tipo_alocacao", "mover")
 
         card = tk.Frame(sec_res, bg=C.SURFACE, padx=24, pady=20)
@@ -3184,10 +3814,10 @@ def _show_alocar(self, nome_op):
                 avisos.append(("A pasta de destino não está acessível agora. Confira a conexão com a rede.", "err"))
             elif info and info.get("existe"):
                 avisos.append((f"O arquivo atual será substituído (modificado {fmt_quando(info['mtime'])}, {info['tam']}).", "warn"))
-        if orig["ext"] != arq["extensao"].lower():
+        if tipo_aloc != "colar_clipboard" and orig["ext"] != arq["extensao"].lower():
             avisos.append((f"A origem é {orig['ext']} e o destino espera {arq['extensao']}. "
                            f"Confira se escolheu o download certo.", "warn"))
-        if orig["mtime"].date() != datetime.now().date():
+        if tipo_aloc != "colar_clipboard" and orig["mtime"].date() != datetime.now().date():
             avisos.append((f"Este download é de {fmt_quando(orig['mtime'])}, não de hoje.", "warn"))
         if avisos:
             av = tk.Frame(card, bg=C.SURFACE)
@@ -3204,198 +3834,154 @@ def _show_alocar(self, nome_op):
         chk.pack(side="left")
         btn.pack(side="right")
 
+        def registrar(descricao, origem_nome, destino_nome, caminho_dest, status):
+            ok_hist = save_hist({
+                "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                "tipo": "alocar", "operacao": nome_op,
+                "descricao": descricao,
+                "arquivo_origem": origem_nome,
+                "arquivo_destino": destino_nome,
+                "caminho_destino": caminho_dest,
+                "status": status,
+            })
+            if not ok_hist:
+                self.toast.show("Histórico não gravado",
+                                "A ação foi feita, mas o registro falhou. Veja app.log.", "warn")
+
+        def concluir(titulo, msg, de, para, abrir):
+            self.toast.show(titulo, msg)
+            estado["ultimo"] = {"hora": datetime.now().strftime("%H:%M:%S"),
+                                "de": de, "para": para, "abrir": abrir}
+            estado["orig"] = None
+            estado["dl"] = list_downloads()
+            self.atualizar_contexto()
+            if sec_res.winfo_exists():
+                render_dest()
+                render_orig()
+                render_res()
+                pintar_etapas()
+
+        def em_andamento(texto):
+            btn.set(text=texto, enabled=False)
+
         def executar():
             if not chk.valor:
                 return
             caminho = orig["caminho"]
-            if not os.path.exists(caminho):
+            if tipo_aloc != "colar_clipboard" and not os.path.exists(caminho):
                 self.toast.show("Arquivo de origem não encontrado",
                                 f"{orig['nome']} saiu da pasta Downloads. Clique em Atualizar lista.", "err")
                 return
 
-            # ── MODO COLAR EM PLANILHA ──────────────────────
-            if tipo_aloc == "colar_planilha":
+            if tipo_aloc in ("colar_planilha", "colar_clipboard"):
                 planilha_path = base_cfg["planilha"]
                 sheet_nome = base_cfg["sheet"]
-                celula_dest = base_cfg.get("celula", "A1")
-                linha_ini = base_cfg.get("linha_inicio_origem", 2)
-
+                plan_nome = os.path.basename(planilha_path)
                 if not os.path.exists(planilha_path):
                     self.toast.show("Planilha de destino não encontrada", planilha_path, "err")
                     return
 
-                ok_msg = messagebox.askyesno(
-                    "Confirmar cola na planilha",
-                    f"Origem: {orig['nome']}\n"
-                    f"Planilha: {os.path.basename(planilha_path)}\n"
-                    f"Aba: {sheet_nome}\n"
-                    f"Célula: {celula_dest}\n"
-                    f"Leitura a partir da linha: {linha_ini}\n\n"
-                    f"A aba será limpa e os dados serão colados. Continuar?",
-                    icon="warning", parent=self.root)
-                if not ok_msg:
+                if tipo_aloc == "colar_planilha":
+                    celula_dest = base_cfg.get("celula", "A1")
+                    linha_ini = base_cfg.get("linha_inicio_origem", 2)
+                    origem_nome = orig["nome"]
+                    descricao = f"{orig['nome']} → {sheet_nome} ({plan_nome})"
+                    texto_conf = (f"Origem: {orig['nome']}\nPlanilha: {plan_nome}\nAba: {sheet_nome}\n"
+                                  f"Célula: {celula_dest}\nLeitura a partir da linha: {linha_ini}\n\n"
+                                  f"A aba será limpa e os dados serão colados. Continuar?")
+
+                    def tarefa():
+                        return colar_na_planilha(caminho, planilha_path, sheet_nome, celula_dest, linha_ini)
+                else:
+                    celula_dest = base_cfg.get("celula", "A2")
+                    max_cols = base_cfg.get("max_colunas", 6)
+                    ok_clip, clip = ler_clipboard_tsv(self.root, max_cols)
+                    if not ok_clip:
+                        self.toast.show("Erro no clipboard", clip, "err")
+                        return
+                    origem_nome = "clipboard (CMS)"
+                    descricao = f"Clipboard → {sheet_nome} ({plan_nome})"
+                    amostra = " | ".join(clip[0][:4])
+                    texto_conf = (f"Dados do clipboard:\n  • {len(clip)} linhas × {max(len(r) for r in clip)} colunas\n"
+                                  f"  • Primeira linha: {amostra}...\n\nPlanilha: {plan_nome}\nAba: {sheet_nome}\n"
+                                  f"Célula: {celula_dest}\n\n"
+                                  f"A aba será limpa (exceto cabeçalho) e os dados colados. Continuar?")
+
+                    def tarefa():
+                        return colar_clipboard_na_planilha(planilha_path, sheet_nome, clip, celula_dest, max_cols)
+
+                if not messagebox.askyesno("Confirmar cola na planilha", texto_conf,
+                                           icon="warning", parent=self.root):
                     self.toast.show("Operação cancelada", "Nada foi alterado.", "warn")
                     return
 
-                sucesso, msg = colar_na_planilha(
-                    caminho, planilha_path, sheet_nome, celula_dest, linha_ini)
+                em_andamento("Colando na planilha...")
 
-                if not sucesso:
-                    self.toast.show("Falha ao colar na planilha", msg, "err")
-                    save_hist({
-                        "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                        "tipo": "alocar", "operacao": nome_op,
-                        "descricao": f"{orig['nome']} → {sheet_nome} ({os.path.basename(planilha_path)})",
-                        "arquivo_origem": orig["nome"],
-                        "arquivo_destino": os.path.basename(planilha_path),
-                        "caminho_destino": planilha_path,
-                        "status": f"Problema: {msg}",
-                    })
-                    return
+                def fim(res):
+                    sucesso, msg = res or (False, "Falha inesperada. Veja app.log.")
+                    if not sucesso:
+                        registrar(descricao, origem_nome, plan_nome, planilha_path, f"Problema: {msg}")
+                        self.toast.show("Falha ao colar na planilha", msg, "err")
+                        if btn.winfo_exists():
+                            btn.set(text="Executar alocação", enabled=chk.valor, command=executar)
+                        return
+                    registrar(descricao, origem_nome, plan_nome, planilha_path, "Sucesso")
+                    concluir("Base colada na planilha", msg, origem_nome,
+                             f"{sheet_nome} ({plan_nome})", planilha_path)
 
-                save_hist({
-                    "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                    "tipo": "alocar", "operacao": nome_op,
-                    "descricao": f"{orig['nome']} → {sheet_nome} ({os.path.basename(planilha_path)})",
-                    "arquivo_origem": orig["nome"],
-                    "arquivo_destino": os.path.basename(planilha_path),
-                    "caminho_destino": planilha_path,
-                    "status": "Sucesso",
-                })
-                self.toast.show("Base colada na planilha", msg)
-                estado["ultimo"] = {
-                    "hora": datetime.now().strftime("%H:%M:%S"),
-                    "de": orig["nome"],
-                    "para": f"{sheet_nome} ({os.path.basename(planilha_path)})",
-                }
-                estado["orig"] = None
-                estado["dl"] = list_downloads()
-                self.atualizar_contexto()
-                render_dest()
-                render_orig()
-                render_res()
-                pintar_etapas()
+                run_async(self.root, tarefa, fim)
                 return
 
-            # ── MODO CLIPBOARD → PLANILHA (CMS) ────────────
-            if tipo_aloc == "colar_clipboard":
-                planilha_path = base_cfg["planilha"]
-                sheet_nome = base_cfg["sheet"]
-                celula_dest = base_cfg.get("celula", "A2")
-                max_cols = base_cfg.get("max_colunas", 6)
-
-                if not os.path.exists(planilha_path):
-                    self.toast.show("Planilha de destino não encontrada",
-                                    planilha_path, "err")
+            if not os.path.isdir(dest_dir):
+                pai = os.path.dirname(dest_dir.rstrip("\\/"))
+                if not os.path.isdir(pai):
+                    self.toast.show("Pasta de destino inacessível", dest_dir, "err")
+                    return
+                if not messagebox.askyesno("Criar pasta do período",
+                                           f"A pasta abaixo ainda não existe:\n{dest_dir}\n\nCriar agora?",
+                                           icon="question", parent=self.root):
+                    return
+                try:
+                    os.makedirs(dest_dir, exist_ok=True)
+                except OSError as e:
+                    self.toast.show("Não foi possível criar a pasta", str(e), "err")
                     return
 
-                # Verificar clipboard antes de confirmar
-                ok_clip, clip_resultado = ler_clipboard_tsv(self.root, max_cols)
-                if not ok_clip:
-                    self.toast.show("Erro no clipboard", clip_resultado, "err")
-                    return
-
-                n_linhas = len(clip_resultado)
-                n_cols = max(len(r) for r in clip_resultado)
-                amostra = " | ".join(clip_resultado[0][:4]) if clip_resultado else ""
-
-                ok_msg = messagebox.askyesno(
-                    "Confirmar cola do clipboard",
-                    f"Dados do clipboard:\n"
-                    f"  • {n_linhas} linhas × {n_cols} colunas\n"
-                    f"  • Primeira linha: {amostra}...\n\n"
-                    f"Planilha: {os.path.basename(planilha_path)}\n"
-                    f"Aba: {sheet_nome}\n"
-                    f"Célula: {celula_dest}\n\n"
-                    f"A aba será limpa (exceto cabeçalho) e os dados colados. Continuar?",
-                    icon="warning", parent=self.root)
-                if not ok_msg:
-                    self.toast.show("Operação cancelada", "Nada foi alterado.", "warn")
-                    return
-
-                sucesso, msg = colar_clipboard_na_planilha(
-                    self.root, planilha_path, sheet_nome, celula_dest, max_cols)
-
-                if not sucesso:
-                    self.toast.show("Falha ao colar clipboard", msg, "err")
-                    save_hist({
-                        "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                        "tipo": "alocar", "operacao": nome_op,
-                        "descricao": f"Clipboard → {sheet_nome} ({os.path.basename(planilha_path)})",
-                        "arquivo_origem": "clipboard (CMS)",
-                        "arquivo_destino": os.path.basename(planilha_path),
-                        "caminho_destino": planilha_path,
-                        "status": f"Problema: {msg}",
-                    })
-                    return
-
-                save_hist({
-                    "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                    "tipo": "alocar", "operacao": nome_op,
-                    "descricao": f"Clipboard → {sheet_nome} ({os.path.basename(planilha_path)})",
-                    "arquivo_origem": "clipboard (CMS)",
-                    "arquivo_destino": os.path.basename(planilha_path),
-                    "caminho_destino": planilha_path,
-                    "status": "Sucesso",
-                })
-                self.toast.show("Dados colados na planilha", msg)
-                estado["ultimo"] = {
-                    "hora": datetime.now().strftime("%H:%M:%S"),
-                    "de": "clipboard (CMS)",
-                    "para": f"{sheet_nome} ({os.path.basename(planilha_path)})",
-                }
-                estado["orig"] = None
-                self.atualizar_contexto()
-                render_dest()
-                render_orig()
-                render_res()
-                pintar_etapas()
-                return
-
-
-            # ── MODO MOVER (padrão) ─────────────────────────
-            if not os.path.exists(dest_dir):
-                self.toast.show("Pasta de destino inacessível", dest_dir, "err")
-                return
-            ok_confirm = messagebox.askyesno("Confirmar alocação",
-                                     f"Origem: {orig['nome']}\nDestino: {nf}\nPasta: {dest_dir}\n\n"
-                                     f"O arquivo será recortado e colado no destino. Continuar?",
-                                     icon="warning", parent=self.root)
-            if not ok_confirm:
+            if not messagebox.askyesno("Confirmar alocação",
+                                       f"Origem: {orig['nome']}\nDestino: {nf}\nPasta: {dest_dir}\n\n"
+                                       f"O arquivo será recortado e colado no destino. Continuar?",
+                                       icon="warning", parent=self.root):
                 self.toast.show("Alocação cancelada", "Nada foi movido.", "warn")
                 return
+
             dp = os.path.join(dest_dir, nf)
+            tmp = dp + ".rta_tmp"
             try:
-                if os.path.exists(dp):
-                    os.remove(dp)
-                shutil.move(caminho, dp)
+                shutil.move(caminho, tmp)
             except PermissionError:
                 self.toast.show("Sem permissão para mover",
-                                "Feche o arquivo se ele estiver aberto no Excel e tente de novo.", "err")
+                                "Feche o arquivo de origem e tente de novo.", "err")
                 return
             except Exception as e:
                 self.toast.show("Não foi possível alocar", str(e), "err")
                 return
-            save_hist({
-                "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                "tipo": "alocar", "operacao": nome_op,
-                "descricao": f"{nf} → {base}",
-                "arquivo_origem": orig["nome"],
-                "arquivo_destino": nf,
-                "caminho_destino": dest_dir,
-                "status": "Sucesso",
-            })
-            self.toast.show("Arquivo alocado", f"{orig['nome']}  →  {nf}")
-            estado["ultimo"] = {"hora": datetime.now().strftime("%H:%M:%S"),
-                                "de": orig["nome"], "para": nf}
-            estado["orig"] = None
-            estado["dl"] = list_downloads()
+            try:
+                os.replace(tmp, dp)
+            except Exception as e:
+                try:
+                    shutil.move(tmp, caminho)
+                except Exception:
+                    logging.exception("Não foi possível devolver %s para Downloads", tmp)
+                if isinstance(e, PermissionError):
+                    self.toast.show("Destino em uso",
+                                    "Feche o arquivo de destino (Excel ou outro usuário) e tente de novo.", "err")
+                else:
+                    self.toast.show("Não foi possível alocar", str(e), "err")
+                return
+
+            registrar(f"{nf} → {base}", orig["nome"], nf, dest_dir, "Sucesso")
             estado["info"][nf] = check_dest(dest_dir, nf)
-            self.atualizar_contexto()
-            render_dest()
-            render_orig()
-            render_res()
-            pintar_etapas()
+            concluir("Arquivo alocado", f"{orig['nome']}  →  {nf}", orig["nome"], nf, dest_dir)
 
     render_base()
     if len(d["bases"]) == 1:
@@ -3453,15 +4039,6 @@ def _campos_template(tpl):
     return {f for _, f, _, _ in string.Formatter().parse(tpl) if f}
 
 
-def _texto_para_html(texto):
-    html = texto.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    html = html.replace("\n\n", "</p><p>").replace("\n", "<br>")
-    return (
-        '<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#333;">'
-        f'<p>{html}</p></div>'
-    )
-
-
 def _show_verificar(self, nome_op, idx=0):
     d = OPERACOES[nome_op]
     cor = d["cor"]
@@ -3472,12 +4049,36 @@ def _show_verificar(self, nome_op, idx=0):
 
     corpo = tk.Frame(B, bg=C.INK)
     corpo.pack(fill="x", padx=28, pady=(18, 36))
+    corpo.grid_columnconfigure(0, minsize=250)
     corpo.grid_columnconfigure(1, weight=1)
-    esq = tk.Frame(corpo, bg=C.INK, width=280)
+    esq = tk.Frame(corpo, bg=C.INK)
     esq.grid(row=0, column=0, sticky="nw", padx=(0, 18))
     dir_ = tk.Frame(corpo, bg=C.INK)
     dir_.grid(row=0, column=1, sticky="nsew")
-    sel = {"i": idx}
+    sel = {"i": min(idx, max(len(vs) - 1, 0))}
+    caixa = {"status": {}}
+    ganchos = []
+    monitoradas = [(chave_verificacao(nome_op, v), v) for v in vs if v.get("modo")]
+    for k, _ in monitoradas:
+        r = status_em_cache(k)
+        if r:
+            caixa["status"][k] = r
+
+    def consultar(chaves=None):
+        pend = [(k, v) for k, v in monitoradas if (chaves is None and k not in caixa["status"])
+                or (chaves is not None and k in chaves)]
+        if not pend or not OUTLOOK_OK:
+            return
+
+        def fim(res):
+            if not esq.winfo_exists():
+                return
+            caixa["status"].update(res or {})
+            render_lista()
+            for g in list(ganchos):
+                g()
+
+        run_async(esq, lambda: consultar_caixa(pend), fim)
 
     def render_lista():
         for w in esq.winfo_children():
@@ -3488,14 +4089,15 @@ def _show_verificar(self, nome_op, idx=0):
         for i, v in enumerate(vs):
             ativo = i == sel["i"]
             bg = C.SURFACE if ativo else C.INK
-            r = tk.Frame(esq, bg=bg, width=280)
+            r = tk.Frame(esq, bg=bg)
             r.pack(fill="x", pady=1)
             tk.Frame(r, bg=cor if ativo else bg, width=3).pack(side="left", fill="y")
             tx = tk.Frame(r, bg=bg, padx=14, pady=9)
             tx.pack(side="left", fill="x", expand=True)
             tk.Label(tx, text=v["nome"],
                      font=fnt(10, "bold" if ativo else "normal"),
-                     bg=bg, fg=C.TEXT, anchor="w", width=28).pack(anchor="w")
+                     bg=bg, fg=C.TEXT, anchor="w", justify="left",
+                     wraplength=205).pack(anchor="w")
             regs = [(dt, x) for dt, x in hoje
                     if x.get("tipo") == "verificar_email"
                     and x.get("descricao") == v["nome"]]
@@ -3506,8 +4108,18 @@ def _show_verificar(self, nome_op, idx=0):
                 tk.Label(tx, text=rtxt, font=fnt(8), bg=bg,
                          fg=TOM[hist_tom(regs[0][1])], anchor="w").pack(anchor="w")
             else:
-                tk.Label(tx, text="pendente hoje", font=fnt(8), bg=bg,
+                tk.Label(tx, text="não registrada hoje", font=fnt(8), bg=bg,
                          fg=C.MUTED, anchor="w").pack(anchor="w")
+            if v.get("modo"):
+                st = caixa["status"].get(chave_verificacao(nome_op, v))
+                if st:
+                    cor_st = {"ok": C.OK, "pendente": C.WARN, "erro": C.ERR}.get(st["estado"], C.MUTED)
+                    txt_st = st["texto"]
+                else:
+                    cor_st = C.MUTED
+                    txt_st = "consultando o Outlook..." if OUTLOOK_OK else MOTIVO_SEM_OUTLOOK
+                tk.Label(tx, text="✉ " + txt_st, font=fnt(8), bg=bg, fg=cor_st, anchor="w",
+                         justify="left", wraplength=205).pack(anchor="w", pady=(2, 0))
             if not ativo:
                 clicavel(r, lambda k=i: selecionar(k), C.INK, C.SURFACE)
 
@@ -3520,8 +4132,13 @@ def _show_verificar(self, nome_op, idx=0):
     def render_detalhe():
         for w in dir_.winfo_children():
             w.destroy()
+        ganchos.clear()
+        if not vs:
+            vazio(dir_, "Nenhuma verificação nesta operação.", "Cadastre uma em Configurar e-mails.", padx=0)
+            return
         vf = vs[sel["i"]]
         tipo = vf.get("tipo", "")
+        chave = chave_verificacao(nome_op, vf)
 
         # ── CABEÇALHO ──
         topo = tk.Frame(dir_, bg=C.SURFACE, padx=24, pady=18)
@@ -3547,6 +4164,94 @@ def _show_verificar(self, nome_op, idx=0):
 
         Btn(meta, "Copiar assunto", copiar_assunto, kind="ghost",
             size=8, padx=10, pady=3).grid(row=1, column=2, padx=(14, 0))
+
+        # ── CAIXA DE ENTRADA ──
+        if vf.get("modo"):
+            cx = tk.Frame(dir_, bg=C.SURFACE, padx=24, pady=16)
+            cx.pack(fill="x", pady=(10, 0))
+            cab_cx = tk.Frame(cx, bg=C.SURFACE)
+            cab_cx.pack(fill="x")
+            tk.Label(cab_cx, text="Caixa de entrada", font=fnt(11, "bold"),
+                     bg=C.SURFACE, fg=C.TEXT).pack(side="left")
+            lbl_quando = tk.Label(cab_cx, font=fnt(8), bg=C.SURFACE, fg=C.MUTED)
+            lbl_quando.pack(side="right")
+            lbl_st = tk.Label(cx, font=fnt(10, "bold"), bg=C.SURFACE, anchor="w",
+                              justify="left", wraplength=400)
+            lbl_st.pack(fill="x", pady=(8, 0))
+            auto_wrap(lbl_st, 48)
+            lbl_ass = tk.Label(cx, font=fnt(9), bg=C.SURFACE, fg=C.TEXT2, anchor="w",
+                               justify="left", wraplength=400)
+            lbl_ass.pack(fill="x", pady=(2, 0))
+            auto_wrap(lbl_ass, 48)
+            acoes_cx = tk.Frame(cx, bg=C.SURFACE)
+            acoes_cx.pack(fill="x", pady=(12, 0))
+            btn_atual = Btn(acoes_cx, "Atualizar", None, kind="ghost", size=9, pady=5,
+                            enabled=OUTLOOK_OK)
+            btn_atual.pack(side="left")
+            btn_abrir = Btn(acoes_cx, "Abrir e-mail", None, kind="ghost", size=9, pady=5, enabled=False)
+            btn_abrir.pack(side="left", padx=(8, 0))
+            btn_montar = None
+            if tipo == "email":
+                btn_montar = Btn(acoes_cx, "Montar e-mail", None, kind="primary", size=9, pady=5,
+                                 enabled=False)
+                btn_montar.pack(side="left", padx=(8, 0))
+
+            def atualizar_caixa():
+                caixa["status"].pop(chave, None)
+                pintar_caixa()
+                consultar([chave])
+
+            def abrir_email():
+                st = caixa["status"].get(chave) or {}
+                ok_a, msg_a = abrir_email_alvo(st["alvo"]) if st.get("alvo") else (False, "Sem e-mail")
+                if not ok_a:
+                    self.toast.show("Não abri o e-mail", msg_a, "err")
+
+            def montar():
+                st = caixa["status"].get(chave) or {}
+                if st.get("estado") == "ok" and not messagebox.askyesno(
+                        "Já respondido", f"{st['texto']}.\n\nMontar outro e-mail mesmo assim?",
+                        icon="question", parent=self.root):
+                    return
+                texto_mail = _texto_email(vf)
+                btn_montar.set(text="Montando...", enabled=False)
+
+                def fim(res):
+                    ok_m, msg_m = res or (False, "Falha inesperada. Veja app.log.")
+                    tom_m = "err" if not ok_m else ("warn" if "Atenção" in msg_m else "ok")
+                    self.toast.show("Rascunho aberto no Outlook" if ok_m else "Não foi possível montar",
+                                    msg_m, tom_m)
+                    pintar_caixa()
+
+                run_async(self.root, lambda: montar_email_outlook(vf, st, texto_mail, vf.get("blocos_excel")), fim)
+
+            def pintar_caixa():
+                if not cx.winfo_exists():
+                    return
+                st = caixa["status"].get(chave)
+                if not st:
+                    lbl_st.configure(text="Consultando o Outlook..." if OUTLOOK_OK
+                                     else MOTIVO_SEM_OUTLOOK, fg=C.MUTED)
+                    lbl_ass.configure(text="")
+                    lbl_quando.configure(text="")
+                else:
+                    lbl_st.configure(text=st["texto"],
+                                     fg={"ok": C.OK, "pendente": C.WARN, "erro": C.ERR}.get(st["estado"], C.TEXT2))
+                    lbl_ass.configure(text=(st.get("alvo") or {}).get("assunto") or st.get("assunto") or "")
+                    lbl_quando.configure(text=f"consultado às {st['em']:%H:%M}" if st.get("em") else "")
+                alvo_st = (st or {}).get("alvo")
+                btn_atual.set(command=atualizar_caixa if OUTLOOK_OK else None)
+                btn_abrir.set(enabled=bool(alvo_st), command=abrir_email if alvo_st else None)
+                if btn_montar is not None:
+                    if vf.get("modo") == "thread":
+                        rot = "Responder no thread" if alvo_st else "Criar e-mail do dia"
+                    else:
+                        rot = "Montar resposta" if alvo_st else "Montar e-mail"
+                    btn_montar.set(text=rot, enabled=OUTLOOK_OK and st is not None
+                                   and st.get("estado") != "erro", command=montar)
+
+            ganchos.append(pintar_caixa)
+            pintar_caixa()
 
         # ── PLANILHA DE APOIO (Parcial Logados) ──
         if "arquivo_ref" in vf:
@@ -3686,14 +4391,14 @@ def _show_verificar(self, nome_op, idx=0):
             cab_jf = tk.Frame(jf, bg=C.SURFACE)
             cab_jf.pack(fill="x")
             tk.Label(cab_jf, text="Gerador de Justificativa",
-                     font=fnt(11, "bold"), bg=C.SURFACE, fg=C.TEXT).pack(side="left")
+                     font=fnt(11, "bold"), bg=C.SURFACE, fg=C.TEXT).pack(anchor="w")
             sla_seg = Segmented(
                 cab_jf,
                 [("SLA abaixo de 80%", "abaixo"), ("SLA 80% ou mais", "ok")],
                 "abaixo",
                 lambda v: render_campos(),
                 {"abaixo": C.WARN, "ok": C.OK})
-            sla_seg.pack(side="right")
+            sla_seg.pack(anchor="w", pady=(8, 0))
 
             tk.Label(jf,
                      text="Preencha os números do e-mail. O texto é montado enquanto você digita.",
@@ -3703,30 +4408,46 @@ def _show_verificar(self, nome_op, idx=0):
 
             val_box = tk.Frame(jf, bg=C.SURFACE)
             val_box.pack(fill="x", pady=(0, 6))
-            lbl_val = tk.Label(val_box, font=fnt(8), bg=C.SURFACE, fg=C.MUTED,
-                               anchor="w", justify="left", wraplength=560)
+            lbl_val = tk.Label(jf, font=fnt(8), bg=C.SURFACE, fg=C.MUTED,
+                               anchor="w", justify="left", wraplength=400)
+            auto_wrap(lbl_val, 48)
 
             def validar_pelo_email():
-                ok_mail, dados_mail = ler_corpo_email_outlook(
-                    vf["assunto_referencia"], vf.get("remetente"))
-                if not ok_mail:
-                    self.toast.show("Não li o e-mail", dados_mail, "err")
-                    return
-                ok_ext, info = extrair_sla_pontual(dados_mail["html"], tipo)
-                if not ok_ext:
-                    self.toast.show("Não extraí o SLA", info, "err")
-                    return
-                if info.get("abaixo") is not None:
-                    sla_seg.set("abaixo" if info["abaixo"] else "ok", notify=True)
-                if info.get("desvio_vol") is not None and "desvio_vol" in campos:
-                    preencher_campo(campos["desvio_vol"], _fmt_pct(info["desvio_vol"]))
-                    atualizar_previa()
-                lbl_val.pack(fill="x", pady=(6, 0))
-                lbl_val.configure(text=info["resumo"],
-                                  fg=C.OK if info.get("abaixo") is False else C.WARN)
-                self.toast.show("E-mail validado", info["resumo_curto"])
+                alvo_v = (caixa["status"].get(chave) or {}).get("alvo")
 
-            Btn(val_box, "Validar com o e-mail (Outlook)",
+                def ler():
+                    if alvo_v:
+                        return ler_html_alvo(alvo_v)
+                    pythoncom.CoInitialize()
+                    try:
+                        return ler_corpo_email_outlook(vf["assunto_referencia"], vf.get("remetente"))
+                    finally:
+                        pythoncom.CoUninitialize()
+
+                def fim(res):
+                    if not jf.winfo_exists():
+                        return
+                    ok_mail, dados_mail = res or (False, "Falha inesperada. Veja app.log.")
+                    if not ok_mail:
+                        self.toast.show("Não li o e-mail", dados_mail, "err")
+                        return
+                    ok_ext, info = extrair_sla_pontual(dados_mail["html"], tipo)
+                    if not ok_ext:
+                        self.toast.show("Não extraí o SLA", info, "err")
+                        return
+                    sla_seg.set("abaixo" if info["abaixo"] else "ok", notify=True)
+                    for k_c, v_c in info.get("campos", {}).items():
+                        if k_c in campos:
+                            preencher_campo(campos[k_c], v_c)
+                    atualizar_previa()
+                    lbl_val.pack(fill="x", pady=(0, 6), after=val_box)
+                    lbl_val.configure(text=f"{dados_mail['assunto']}\n{info['resumo']}",
+                                      fg=C.OK if not info["abaixo"] else C.WARN)
+                    self.toast.show("Campos preenchidos pelo e-mail", info["resumo_curto"])
+
+                run_async(jf, ler, fim)
+
+            Btn(val_box, "Preencher pelo e-mail (Outlook)",
                 command=validar_pelo_email if OUTLOOK_OK else None,
                 kind="ghost", size=9, pady=5, enabled=OUTLOOK_OK).pack(side="left")
         
@@ -3763,7 +4484,7 @@ def _show_verificar(self, nome_op, idx=0):
             lbl_falta.pack(side="right")
 
             txt_prev = tk.Text(jf, font=fnt(10), bg=C.INK, fg=C.TEXT,
-                               height=9, bd=0, padx=16, pady=14, wrap="word",
+                               height=9, width=1, bd=0, padx=16, pady=14, wrap="word",
                                highlightthickness=1, highlightbackground=C.LINE,
                                spacing2=2, spacing3=4)
             txt_prev.pack(fill="x")
@@ -3849,7 +4570,7 @@ def _show_verificar(self, nome_op, idx=0):
                 lbl_outlook.configure(text="✅ Outlook disponível", fg=C.OK)
             else:
                 lbl_outlook.configure(
-                    text="❌ pywin32 não instalado — use Copiar justificativa",
+                    text=f"❌ {MOTIVO_SEM_OUTLOOK} — use Copiar justificativa",
                     fg=C.ERR)
 
             btns_ol = tk.Frame(envio, bg=C.SURFACE)
@@ -3864,11 +4585,21 @@ def _show_verificar(self, nome_op, idx=0):
                             "Deseja abrir o e-mail mesmo assim?",
                             icon="warning", parent=self.root):
                         return
+                st = caixa["status"].get(chave) or {}
+                if st.get("alvo"):
+                    def fim_m(res):
+                        ok_m, msg_m = res or (False, "Falha inesperada. Veja app.log.")
+                        self.toast.show("E-mail aberto no Outlook" if ok_m else "Erro ao abrir Outlook",
+                                        "Revise e clique em Enviar." if ok_m else msg_m, "ok" if ok_m else "err")
+
+                    run_async(self.root, lambda: montar_email_outlook(vf, st, texto_final), fim_m)
+                    return
                 corpo_html = _texto_para_html(texto_final)
                 ok, msg = preparar_outlook(
                     assunto=vf["assunto_referencia"],
                     corpo_html=corpo_html,
-                    responder_a=vf["assunto_referencia"])
+                    responder_a=vf["assunto_referencia"],
+                    remetente=vf.get("remetente"))
                 if ok:
                     self.toast.show("E-mail aberto no Outlook",
                                     "Revise e clique em Enviar manualmente.")
@@ -3881,29 +4612,45 @@ def _show_verificar(self, nome_op, idx=0):
                     self.toast.show("Campos em aberto",
                                     "Preencha todos os campos antes.", "warn")
                     return
+                st = caixa["status"].get(chave) or {}
+                aviso_resp = f"\n\nAtenção: {st['texto']}." if st.get("estado") == "ok" else ""
+                assunto_alvo = (st.get("alvo") or {}).get("assunto") or vf["assunto_referencia"]
                 if not messagebox.askyesno(
                         "Enviar automaticamente?",
                         f"O e-mail será respondido a todos.\n\n"
-                        f"Assunto: {vf['assunto_referencia']}\n\nConfirma?",
+                        f"Assunto: {assunto_alvo}{aviso_resp}\n\nConfirma?",
                         icon="warning", parent=self.root):
+                    return
+                if st.get("alvo"):
+                    def fim_e(res):
+                        ok_e, msg_e = res or (False, "Falha inesperada. Veja app.log.")
+                        concluir_envio(ok_e, msg_e)
+
+                    run_async(self.root, lambda: montar_email_outlook(vf, st, texto_final, enviar=True), fim_e)
                     return
                 corpo_html = _texto_para_html(texto_final)
                 ok, msg = enviar_outlook(
                     assunto=vf["assunto_referencia"],
                     corpo_html=corpo_html,
-                    responder_a=vf["assunto_referencia"])
+                    responder_a=vf["assunto_referencia"],
+                    remetente=vf.get("remetente"))
+                concluir_envio(ok, msg)
+
+            def concluir_envio(ok, msg):
                 if ok:
                     self.toast.show("E-mail enviado",
                                     "Justificativa enviada pelo Outlook.")
                     save_hist({
                         "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
                         "tipo": "verificar_email", "operacao": nome_op,
-                        "descricao": f"{vf['nome']} (envio automático)",
+                        "descricao": vf["nome"],
                         "resultado": "ok",
-                        "observacoes": "Enviado automaticamente",
+                        "observacoes": "Enviado automaticamente pelo Outlook",
                         "status": "Verificado — OK"})
-                    render_lista()
                     self.atualizar_contexto()
+                    if esq.winfo_exists():
+                        render_lista()
+                        self.root.after(4000, lambda: consultar([chave]))
                 else:
                     self.toast.show("Falha no envio", msg, "err")
 
@@ -3935,7 +4682,7 @@ def _show_verificar(self, nome_op, idx=0):
         tk.Label(rg, text="Observações (opcional)", font=fnt(8),
                  bg=C.SURFACE, fg=C.TEXT2, anchor="w").pack(fill="x", pady=(10, 2))
         obs = tk.Text(rg, font=fnt(10), bg=C.INK, fg=C.TEXT,
-                      insertbackground=C.TEXT, height=3, bd=0, padx=12, pady=8,
+                      insertbackground=C.TEXT, height=3, width=1, bd=0, padx=12, pady=8,
                       highlightthickness=1, highlightbackground=C.LINE,
                       highlightcolor=C.ACCENT)
         obs.pack(fill="x")
@@ -3949,9 +4696,11 @@ def _show_verificar(self, nome_op, idx=0):
                         "ok",
                         cores={"ok": C.OK, "ressalva": C.WARN, "erro": C.ERR})
         res.pack(side="left")
-        btn_reg = Btn(linha, "", kind="primary", size=11,
+        acoes_rg = tk.Frame(rg, bg=C.SURFACE)
+        acoes_rg.pack(fill="x", pady=(14, 0))
+        btn_reg = Btn(acoes_rg, "", kind="primary", size=11,
                       padx=22, pady=9, enabled=False)
-        btn_reg.pack(side="right")
+        btn_reg.pack(side="left")
 
         def atualizar_checks():
             feitos = sum(1 for c in checks if c.valor)
@@ -3989,8 +4738,8 @@ def _show_verificar(self, nome_op, idx=0):
                             tom)
             btn_reg.set(text=f"Registrada às {datetime.now():%H:%M}",
                         kind="ok", enabled=True, command=None)
-            Btn(linha, "Nova verificação", render_detalhe,
-                kind="ghost", size=10, pady=9).pack(side="right", padx=(0, 10))
+            Btn(acoes_rg, "Nova verificação", render_detalhe,
+                kind="ghost", size=10, pady=9).pack(side="left", padx=(10, 0))
             render_lista()
             self.atualizar_contexto()
 
@@ -3998,9 +4747,316 @@ def _show_verificar(self, nome_op, idx=0):
 
     render_lista()
     render_detalhe()
+    consultar()
 
 
 WFMApp.show_verificar = _show_verificar
+
+
+# ── Célula 20.1 (código) ────────────────────────────────────────────────
+# ============================================================
+# TELA — CONFIGURAR E-MAILS ACOMPANHADOS
+# ============================================================
+
+def _slug(texto):
+    s = re.sub(r"[^a-z0-9]+", "-", texto.lower().encode("ascii", "ignore").decode()).strip("-")
+    return s or "verificacao"
+
+
+def _show_config_emails(self, editar_id=None):
+    B = self._pagina("Configurar e-mails",
+                     "E-mails que a Central acompanha no Outlook. Vale para toda a equipe.", "cfg_emails")
+    lista = carregar_config_emails()
+
+    cab = tk.Frame(B, bg=C.INK)
+    cab.pack(fill="x", padx=28, pady=(16, 0))
+    tk.Label(cab, text=f"Arquivo: {ARQ_CONFIG_EMAILS}", font=fnt(8), bg=C.INK, fg=C.MUTED,
+             anchor="w").pack(side="left")
+    Btn(cab, "Nova verificação", lambda: self.show_config_emails("__nova__"),
+        kind="primary", size=9, pady=5).pack(side="right")
+
+    secao(B, "Cadastradas", f"{len(lista)} {'item' if len(lista) == 1 else 'itens'}")
+    box = tk.Frame(B, bg=C.INK)
+    box.pack(fill="x", padx=28)
+    if not lista:
+        vazio(box, "Nenhuma verificação cadastrada.", "Clique em Nova verificação para começar.", padx=0)
+    for cfg in lista:
+        sel = cfg.get("id") == editar_id
+        row = tk.Frame(box, bg=C.RAISED if sel else C.SURFACE, padx=18, pady=10)
+        row.pack(fill="x", pady=(0, 2))
+        bg = row.cget("bg")
+        cor_op = OPERACOES.get(cfg.get("operacao"), {}).get("cor", C.ACCENT)
+        ponto(row, cor_op, bg).pack(side="left")
+        tx = tk.Frame(row, bg=bg)
+        tx.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        tk.Label(tx, text=f"{cfg.get('operacao', '')} · {cfg.get('nome', '')}", font=fnt(10, "bold"),
+                 bg=bg, fg=C.TEXT, anchor="w").pack(anchor="w")
+        modo = "Thread do dia" if cfg.get("modo") == "thread" else "Responder recebido"
+        tk.Label(tx, text=f"{modo}  ·  assunto contém \"{cfg.get('assunto', '')}\"", font=fnt(8),
+                 bg=bg, fg=C.TEXT2, anchor="w").pack(anchor="w")
+        if not sel:
+            clicavel(row, lambda i=cfg.get("id"): self.show_config_emails(i), C.SURFACE, C.RAISED)
+
+    if editar_id is None:
+        tk.Frame(B, bg=C.INK, height=36).pack()
+        return
+
+    atual = next((dict(c) for c in lista if c.get("id") == editar_id), None)
+    nova = atual is None
+    atual = atual or {"modo": "thread", "dias_referencia": 0, "ciclo_min": 60, "manter_historico": False,
+                      "corpo": "{saudacao}!\n\nSegue atualização.\n\nQualquer dúvida estou à disposição.",
+                      "blocos_excel": [], "checklist": ["Revisar o rascunho no Outlook", "Enviar"]}
+
+    secao(B, "Nova verificação" if nova else f"Editar: {atual.get('nome', '')}")
+    form = tk.Frame(B, bg=C.SURFACE, padx=24, pady=18)
+    form.pack(fill="x", padx=28)
+    form.grid_columnconfigure((0, 1), weight=1, uniform="cfg")
+
+    def campo(parent, rotulo, valor, dica="", linha=0, coluna=0, span=1):
+        f = tk.Frame(parent, bg=C.SURFACE)
+        f.grid(row=linha, column=coluna, columnspan=span, sticky="ew", padx=(0, 12), pady=(0, 10))
+        tk.Label(f, text=rotulo, font=fnt(8), bg=C.SURFACE, fg=C.TEXT2, anchor="w").pack(fill="x")
+        cp = Campo(f, dica, width=10)
+        cp.pack(fill="x", pady=(2, 0))
+        if valor not in (None, ""):
+            preencher_campo(cp, valor)
+        return cp
+
+    def texto_longo(parent, rotulo, valor, altura, dica=""):
+        tk.Label(parent, text=rotulo, font=fnt(8), bg=C.SURFACE, fg=C.TEXT2, anchor="w").pack(fill="x", pady=(6, 2))
+        if dica:
+            tk.Label(parent, text=dica, font=fnt(8), bg=C.SURFACE, fg=C.MUTED, anchor="w").pack(fill="x")
+        t = tk.Text(parent, font=fnt(10), bg=C.INK, fg=C.TEXT, insertbackground=C.TEXT, height=altura,
+                    width=1, bd=0, padx=10, pady=8, wrap="word", highlightthickness=1,
+                    highlightbackground=C.LINE, highlightcolor=C.ACCENT)
+        t.pack(fill="x")
+        t.insert("1.0", valor or "")
+        return t
+
+    ops = sorted(OPERACOES)
+    cp_op = campo(form, "Operação (existente ou nova)", atual.get("operacao"), "ex: Accor", 0, 0)
+    cp_nome = campo(form, "Nome da verificação", atual.get("nome"), "ex: Report Pontual", 0, 1)
+    tk.Label(form, text="Existentes: " + ", ".join(ops), font=fnt(8), bg=C.SURFACE, fg=C.MUTED,
+             anchor="w", justify="left", wraplength=600).grid(row=1, column=0, columnspan=2, sticky="w",
+                                                              pady=(0, 10))
+    cp_desc = campo(form, "Descrição", atual.get("descricao"), "o que é verificado", 2, 0, 2)
+
+    modo_box = tk.Frame(form, bg=C.SURFACE)
+    modo_box.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+    tk.Label(modo_box, text="Como funciona", font=fnt(8), bg=C.SURFACE, fg=C.TEXT2, anchor="w").pack(fill="x")
+    seg_modo = Segmented(modo_box, [("Responder e-mail recebido", "responder"),
+                                    ("Enviar no thread do dia", "thread")],
+                         atual.get("modo", "responder"), lambda v: alternar_modo())
+    seg_modo.pack(anchor="w", pady=(4, 0))
+
+    cp_assunto = campo(form, "Trecho fixo do assunto (sem data/hora)", atual.get("assunto"),
+                       "ex: Report Pontual - Accor", 4, 0, 2)
+
+    fr_resp = tk.Frame(form, bg=C.SURFACE)
+    fr_resp.grid_columnconfigure((0, 1), weight=1, uniform="r")
+    cp_rem = campo(fr_resp, "Remetente (parte do nome ou e-mail, opcional)", atual.get("remetente"),
+                   "ex: devmis.reports@foundever.com", 0, 0, 2)
+
+    fr_thread = tk.Frame(form, bg=C.SURFACE)
+    fr_thread.grid_columnconfigure((0, 1), weight=1, uniform="t")
+    cp_novo = campo(fr_thread, "Assunto do e-mail do dia ({data} = dd/mm)", atual.get("assunto_novo"),
+                    "ex: Report Pontual - Accor - {data}", 0, 0, 2)
+    cp_ciclo = campo(fr_thread, "Ciclo entre envios (min, 0 = 1x por dia)", atual.get("ciclo_min", 60), "60", 1, 0)
+    dia_box = tk.Frame(fr_thread, bg=C.SURFACE)
+    dia_box.grid(row=1, column=1, sticky="ew", pady=(0, 10))
+    tk.Label(dia_box, text="Data no assunto", font=fnt(8), bg=C.SURFACE, fg=C.TEXT2, anchor="w").pack(fill="x")
+    seg_dia = Segmented(dia_box, [("Hoje", "0"), ("Ontem", "-1")], str(atual.get("dias_referencia", 0)))
+    seg_dia.pack(anchor="w", pady=(4, 0))
+
+    def alternar_modo():
+        if seg_modo.valor == "thread":
+            fr_resp.grid_forget()
+            fr_thread.grid(row=5, column=0, columnspan=2, sticky="ew")
+        else:
+            fr_thread.grid_forget()
+            fr_resp.grid(row=5, column=0, columnspan=2, sticky="ew")
+
+    alternar_modo()
+
+    extra = tk.Frame(form, bg=C.SURFACE)
+    extra.grid(row=6, column=0, columnspan=2, sticky="ew")
+    chk_hist = CheckRow(extra, "Manter o histórico do thread na resposta", nivel=0)
+    chk_hist.pack(fill="x")
+    chk_hist.set(bool(atual.get("manter_historico", False)))
+    cp_hor = None
+    if atual.get("operacao") not in OPERACOES or OPERACOES.get(atual.get("operacao"), {}).get("origem") == "config":
+        hf = tk.Frame(extra, bg=C.SURFACE)
+        hf.pack(fill="x", pady=(6, 0))
+        hf.grid_columnconfigure((0, 1), weight=1, uniform="h")
+        cp_hor = campo(hf, "Horário da operação (se for nova)", atual.get("horario"), "08:00 – 20:00", 0, 0)
+
+    txt_corpo = texto_longo(extra, "Texto do e-mail", atual.get("corpo"), 7,
+                            "Variáveis: {saudacao} (Bom dia/Boa tarde/Boa noite), {data} (dd/mm), {hora}")
+    txt_check = texto_longo(extra, "Checklist (um item por linha)", "\n".join(atual.get("checklist") or []), 4)
+
+    tk.Label(extra, text="Blocos da planilha", font=fnt(10, "bold"), bg=C.SURFACE, fg=C.TEXT,
+             anchor="w").pack(fill="x", pady=(16, 0))
+    tk.Label(extra, text="Intervalos do Excel colados no e-mail, na ordem abaixo: como imagem (print) "
+                         "ou como tabela com a formatação.",
+             font=fnt(8), bg=C.SURFACE, fg=C.MUTED, anchor="w", justify="left",
+             wraplength=600).pack(fill="x", pady=(2, 6))
+    blocos_box = tk.Frame(extra, bg=C.SURFACE)
+    blocos_box.pack(fill="x")
+    linhas_bloco = []
+
+    def adicionar_bloco(b=None):
+        b = b or {}
+        f = tk.Frame(blocos_box, bg=C.RAISED, padx=12, pady=10)
+        f.pack(fill="x", pady=(0, 4))
+        f.grid_columnconfigure((0, 1, 2), weight=1, uniform="b")
+
+        def mini(rot, val, dica, lin, col, span=1):
+            g = tk.Frame(f, bg=C.RAISED)
+            g.grid(row=lin, column=col, columnspan=span, sticky="ew", padx=(0, 8), pady=(0, 6))
+            tk.Label(g, text=rot, font=fnt(8), bg=C.RAISED, fg=C.TEXT2, anchor="w").pack(fill="x")
+            cp = Campo(g, dica, width=8)
+            cp.pack(fill="x", pady=(2, 0))
+            if val:
+                preencher_campo(cp, val)
+            return cp
+
+        c_tit = mini("Título acima do bloco", b.get("titulo"), "ex: Parcial de Volumetria", 0, 0, 3)
+        c_plan = mini("Planilha", b.get("planilha"), r"\\servidor\pasta\arquivo.xlsm", 1, 0, 2)
+
+        def procurar():
+            from tkinter import filedialog
+            p = filedialog.askopenfilename(parent=self.root, title="Escolha a planilha",
+                                           filetypes=[("Excel", "*.xlsx *.xlsm *.xls"), ("Todos", "*.*")])
+            if p:
+                preencher_campo(c_plan, os.path.normpath(p))
+
+        Btn(f, "Procurar", procurar, kind="ghost", size=8, pady=4).grid(row=1, column=2, sticky="sw", pady=(0, 8))
+        c_aba = mini("Aba", b.get("aba"), "ex: Resumo", 2, 0)
+        c_int = mini("Intervalo", b.get("intervalo"), "ex: B2:M30", 2, 1)
+        g = tk.Frame(f, bg=C.RAISED)
+        g.grid(row=2, column=2, sticky="ew", pady=(0, 6))
+        tk.Label(g, text="Colar como", font=fnt(8), bg=C.RAISED, fg=C.TEXT2, anchor="w").pack(fill="x")
+        seg = Segmented(g, [("Imagem", "imagem"), ("Tabela", "tabela")], b.get("como", "imagem"))
+        seg.pack(anchor="w", pady=(2, 0))
+        item = {"frame": f, "titulo": c_tit, "planilha": c_plan, "aba": c_aba, "intervalo": c_int, "como": seg}
+
+        def remover():
+            linhas_bloco.remove(item)
+            f.destroy()
+
+        Btn(f, "Remover bloco", remover, kind="quiet", size=8, pady=2).grid(row=3, column=0, sticky="w")
+        linhas_bloco.append(item)
+
+    for b in atual.get("blocos_excel") or []:
+        adicionar_bloco(b)
+    Btn(extra, "+ Adicionar bloco", lambda: adicionar_bloco(), kind="ghost", size=9,
+        pady=5).pack(anchor="w", pady=(4, 0))
+
+    resultado = tk.Label(extra, font=fnt(9), bg=C.SURFACE, anchor="w", justify="left", wraplength=600)
+    auto_wrap(resultado, 0)
+
+    def coletar():
+        op, nome, assunto = cp_op.valor(), cp_nome.valor(), cp_assunto.valor()
+        faltam = [n for n, v in (("operação", op), ("nome", nome), ("trecho do assunto", assunto)) if not v]
+        if faltam:
+            self.toast.show("Campos obrigatórios", "Preencha " + juntar(faltam) + ".", "warn")
+            return None
+        try:
+            ciclo = int(cp_ciclo.valor() or 0)
+        except ValueError:
+            self.toast.show("Ciclo inválido", "Use um número inteiro de minutos.", "warn")
+            return None
+        blocos = []
+        for b in linhas_bloco:
+            if b["planilha"].valor() and b["aba"].valor() and b["intervalo"].valor():
+                blocos.append({"titulo": b["titulo"].valor(), "planilha": b["planilha"].valor(),
+                               "aba": b["aba"].valor(), "intervalo": b["intervalo"].valor().upper(),
+                               "como": b["como"].valor})
+        cfg = {
+            "id": atual.get("id") or _slug(f"{op}-{nome}"),
+            "operacao": op, "nome": nome, "descricao": cp_desc.valor() or nome,
+            "modo": seg_modo.valor, "assunto": assunto,
+            "remetente": cp_rem.valor() if seg_modo.valor == "responder" else "",
+            "assunto_novo": cp_novo.valor() if seg_modo.valor == "thread" else "",
+            "dias_referencia": int(seg_dia.valor), "ciclo_min": ciclo,
+            "manter_historico": chk_hist.valor,
+            "corpo": txt_corpo.get("1.0", "end").rstrip(),
+            "checklist": [l.strip() for l in txt_check.get("1.0", "end").splitlines() if l.strip()],
+            "blocos_excel": blocos,
+        }
+        if cp_hor is not None and cp_hor.valor():
+            cfg["horario"] = cp_hor.valor()
+        return cfg
+
+    def salvar():
+        cfg = coletar()
+        if not cfg:
+            return
+        dados = [c for c in carregar_config_emails() if c.get("id") != cfg["id"]]
+        if nova and any(c.get("id") == cfg["id"] for c in carregar_config_emails()):
+            cfg["id"] = f"{cfg['id']}-{datetime.now():%H%M%S}"
+        dados.append(cfg)
+        try:
+            salvar_config_emails(dados)
+        except OSError as e:
+            self.toast.show("Não foi possível salvar", str(e), "err")
+            return
+        aplicar_config_emails(dados)
+        with _STATUS_LOCK:
+            _STATUS_CACHE.clear()
+        self._nav_assinatura = None
+        self.toast.show("Configuração salva", f"{cfg['operacao']} · {cfg['nome']}")
+        self.show_config_emails(cfg["id"])
+
+    def excluir():
+        if not messagebox.askyesno("Excluir verificação",
+                                   f"Excluir '{atual.get('nome')}' de {atual.get('operacao')}?\n"
+                                   "Isso vale para toda a equipe.", icon="warning", parent=self.root):
+            return
+        dados = [c for c in carregar_config_emails() if c.get("id") != atual.get("id")]
+        try:
+            salvar_config_emails(dados)
+        except OSError as e:
+            self.toast.show("Não foi possível salvar", str(e), "err")
+            return
+        aplicar_config_emails(dados)
+        self._nav_assinatura = None
+        self.toast.show("Verificação excluída", atual.get("nome", ""), "warn")
+        self.show_config_emails()
+
+    def testar():
+        cfg = coletar()
+        if not cfg:
+            return
+        vf = _verificacao_de_config(cfg)
+        resultado.configure(text="Consultando o Outlook...", fg=C.MUTED)
+        resultado.pack(fill="x", pady=(12, 0), before=acoes)
+
+        def fim(res):
+            if not resultado.winfo_exists():
+                return
+            r = (res or {}).get("teste") or {"estado": "erro", "texto": "Falha inesperada. Veja app.log."}
+            cor_r = {"ok": C.OK, "pendente": C.WARN, "erro": C.ERR}.get(r["estado"], C.TEXT2)
+            extra_txt = f"\nE-mail encontrado: {r['assunto']}" if r.get("assunto") else ""
+            if r.get("alvo") and not r.get("assunto"):
+                extra_txt = f"\nE-mail encontrado: {r['alvo'].get('assunto', '')}"
+            resultado.configure(text=f"Resultado do teste: {r['texto']}{extra_txt}", fg=cor_r)
+
+        run_async(resultado, lambda: consultar_caixa([("teste", vf)]), fim)
+
+    acoes = tk.Frame(extra, bg=C.SURFACE)
+    acoes.pack(fill="x", pady=(18, 0))
+    Btn(acoes, "Salvar", salvar, kind="primary", size=10, pady=8).pack(side="left")
+    Btn(acoes, "Testar no Outlook", testar if OUTLOOK_OK else None, kind="ghost", size=10, pady=8,
+        enabled=OUTLOOK_OK).pack(side="left", padx=(10, 0))
+    if not nova:
+        Btn(acoes, "Excluir", excluir, kind="danger", size=10, pady=8).pack(side="right")
+    Btn(acoes, "Cancelar", lambda: self.show_config_emails(), kind="quiet", size=10,
+        pady=8).pack(side="right", padx=(0, 10))
+    tk.Frame(B, bg=C.INK, height=36).pack()
+
+
+WFMApp.show_config_emails = _show_config_emails
 
 
 # ── Célula 21 (markdown) ────────────────────────────────────────────────
@@ -4010,8 +5066,6 @@ WFMApp.show_verificar = _show_verificar
 
 # ── Célula 22 (código) ──────────────────────────────────────────────────
 
-app = WFMApp()
-app.run()
 
 
 # ── Célula 23 (markdown) ────────────────────────────────────────────────
@@ -4033,19 +5087,23 @@ def ver_historico():
               f" / {r.get('descricao','')} — {r.get('status','')}")
 
 def limpar_historico():
-    with open(HISTORICO_FILE, "w") as f:
+    with open(HISTORICO_FILE, "w", encoding="utf-8") as f:
         json.dump([], f)
+    _HIST_CACHE.update(mtime=None, dados=[])
     print("✅ Limpo!")
 
 def verificar_pastas():
     for n, d in OPERACOES.items():
         print(f"\n{d['icone']} {n}:")
         for nb, db in d["bases"].items():
-            e = os.path.exists(db["destino"])
-            print(f"  {'✅' if e else '❌'} {nb}: {db['destino']}")
+            dest = destino_base(db)
+            print(f"  {'✅' if os.path.exists(dest) else '❌'} {nb}: {dest}")
 
 # Descomente:
 # ver_historico()
 # limpar_historico()
 # verificar_pastas()
 
+
+if __name__ == "__main__":
+    WFMApp().run()
