@@ -1,0 +1,4051 @@
+# Convertido de: Projeto Automação de atts reemaster 2 1 (1) (1).ipynb
+# Gerado automaticamente por conversor_ipynb_py.py
+
+# ── Célula 1 (markdown) ────────────────────────────────────────────────
+# #  Sistema de Alocação e Verificação de Arquivos
+# 
+# **Fluxo de uso**
+# 
+# ```text
+#                     Usuário seleciona a operação
+#                                  │
+#                  ┌───────────────┴───────────────┐
+#                  ▼                               ▼
+#             ALOCAR                        VERIFICAR E-MAIL
+#   ───────────────────────────      ───────────────────────────────
+#   1. Seleciona a base              1. Seleciona a verificação
+#   2. Seleciona o destino           2. Completa o checklist
+#   3. Seleciona a origem            3. Adiciona observações (opc.)
+#   4. Revisa o resumo               4. Escolhe o resultado
+#   5. ☑ Marca a confirmação            (OK / Ressalva / Reprovado)
+#   6. Clica em EXECUTAR             5. Clica em Registrar
+#                  │                               │
+#                  ▼                               ▼
+#   ✅ Arquivo movido e registrado   ✅ Verificação salva no histórico
+# ```
+
+# ── Célula 2 (markdown) ────────────────────────────────────────────────
+# ---
+# 
+# ## ⚙️ Célula 0 · Mapeamento de caminhos
+# 
+# > **Edite aqui se necessário.**
+# > Todos os caminhos do sistema ficam centralizados nesta célula.
+# > Se algum caminho mudar, altere **apenas aqui**: as demais células leem destas variáveis.
+# 
+# ---
+
+# ── Célula 3 (markdown) ────────────────────────────────────────────────
+# ```text
+# # ============================================================
+# # IMPORTS CENTRALIZADOS
+# # ============================================================
+# ```
+# ============================================================
+# CÉLULA -1 — VERIFICAÇÃO DE DEPENDÊNCIAS
+# ============================================================
+# Roda ANTES de qualquer import do projeto.
+#
+# O que faz:
+#   1. Verifica se cada biblioteca está instalada.
+#   2. Se faltar alguma, mostra o comando pip e (opcionalmente)
+#      instala automaticamente.
+#   3. Verifica o navegador Chromium do Playwright.
+#   4. Após instalar algo:
+#        - Script (.py)  -> reabre o programa sozinho (1 vez).
+#        - Notebook      -> pede para reiniciar o kernel.
+#
+# Observação: tkinter faz parte do Python e NÃO é instalado via
+# pip. Se faltar, é preciso reinstalar o Python com "tcl/tk".
+# ============================================================
+import sys
+
+APP_NOME = "CentralRTA"
+APP_VERSAO = "1.0.0"
+FROZEN = getattr(sys, "frozen", False)   # True quando roda como .exe
+
+import sys
+import os
+import subprocess
+import importlib
+import importlib.util
+from pathlib import Path
+
+# (módulo usado no import, pacote do pip, para que serve)
+DEPENDENCIAS = [
+    ("openpyxl",   "openpyxl",       "Leitura e escrita de planilhas"),
+    ("curl_cffi",  "curl_cffi",      "Requests autenticadas (Botmaker)"),
+    ("bs4",        "beautifulsoup4", "Parsing de HTML"),
+    ("pandas",     "pandas",         "Leitura dos dados extraídos"),
+    ("lxml",       "lxml",           "Leitura de tabelas HTML (pandas.read_html)"),
+    ("playwright", "playwright",     "Autenticação SSO via navegador"),
+]
+
+# True  = instala sozinho o que faltar
+# False = apenas mostra o comando pip para o usuário executar
+AUTO_INSTALAR = True
+
+# Variável de ambiente usada para evitar loop de reinício
+_FLAG_REINICIO = "RTA_REINICIADO"
+
+
+def _em_notebook():
+    """True quando executado dentro do Jupyter."""
+    return "ipykernel" in sys.modules
+
+
+def _modulo_instalado(nome_modulo):
+    """Verifica a presença do módulo sem importá-lo."""
+    try:
+        return importlib.util.find_spec(nome_modulo) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _chromium_instalado():
+    """
+    Verifica se o Chromium do Playwright já foi baixado.
+    Não usa a API do Playwright, para evitar conflito com o
+    event loop do Jupyter.
+    """
+    base = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if base == "0":
+        return True  # navegadores dentro do pacote; não dá para checar
+    if base:
+        pasta = Path(base)
+    else:
+        local = os.environ.get(
+            "LOCALAPPDATA", str(Path.home() / "AppData" / "Local")
+        )
+        pasta = Path(local) / "ms-playwright"
+    return pasta.exists() and any(pasta.glob("chromium-*"))
+
+
+def _executar_comando(cmd, descricao):
+    """Executa um comando e devolve True se terminou sem erro."""
+    print(f"   ⏳ {descricao}...")
+    try:
+        r = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=900
+        )
+        if r.returncode != 0:
+            ultimas = "\n".join((r.stderr or r.stdout).splitlines()[-6:])
+            print(f"   ❌ Falhou:\n{ultimas}")
+            return False
+        print("   ✅ Concluído.")
+        return True
+    except Exception as e:
+        print(f"   ❌ Erro ao executar: {e}")
+        return False
+
+
+def _reiniciar_programa():
+    """Notebook: pede reinício do kernel. Script: reabre uma vez."""
+    if _em_notebook():
+        # Interrompe o "Run All" para o usuário reiniciar o kernel
+        raise RuntimeError(
+            "Bibliotecas instaladas. Reinicie o kernel "
+            "(Kernel > Restart) e execute novamente."
+        )
+
+    if os.environ.get(_FLAG_REINICIO) == "1":
+        print("⚠️ Ainda há pendências após o reinício automático.")
+        print("   Feche o programa e abra novamente.")
+        sys.exit(1)
+
+    print("\n🔁 Reiniciando o programa para carregar as bibliotecas...")
+    env = dict(os.environ)
+    env[_FLAG_REINICIO] = "1"
+    subprocess.Popen([sys.executable, *sys.argv], env=env)
+    sys.exit(0)
+
+
+def verificar_dependencias():
+    print("🔎 Verificando dependências...")
+    faltando = [
+        (m, p, d) for m, p, d in DEPENDENCIAS
+        if not _modulo_instalado(m)
+    ]
+    instalou_algo = False
+
+    # ── 1. Bibliotecas Python ────────────────────────────────
+    if faltando:
+        pacotes = [p for _, p, _ in faltando]
+        print("\n⚠️ Bibliotecas ausentes:")
+        for _, pacote, desc in faltando:
+            print(f"   • {pacote:<16} {desc}")
+
+        comando_manual = f'"{sys.executable}" -m pip install ' + " ".join(pacotes)
+        print(f"\n💡 Comando manual:\n   {comando_manual}\n")
+
+        if not AUTO_INSTALAR:
+            print("Execute o comando acima e abra o programa novamente.")
+            sys.exit(1)
+
+        ok = _executar_comando(
+            [sys.executable, "-m", "pip", "install",
+             "--disable-pip-version-check", *pacotes],
+            "Instalando " + ", ".join(pacotes)
+        )
+        if not ok:
+            print("\n❌ Instalação automática falhou (proxy/permissão?).")
+            print(f"   Execute manualmente:\n   {comando_manual}")
+            sys.exit(1)
+
+        importlib.invalidate_caches()
+        instalou_algo = True
+
+    # ── 2. Navegador do Playwright ───────────────────────────
+    if _modulo_instalado("playwright") and not _chromium_instalado():
+        print("\n⚠️ Chromium do Playwright não encontrado.")
+        comando_chromium = f'"{sys.executable}" -m playwright install chromium'
+        print(f"💡 Comando manual:\n   {comando_chromium}\n")
+
+        if AUTO_INSTALAR:
+            ok = _executar_comando(
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                "Baixando Chromium"
+            )
+            instalou_algo = instalou_algo or ok
+        else:
+            print("Execute o comando acima e abra o programa novamente.")
+            sys.exit(1)
+
+    # ── 3. Tkinter (não instalável via pip) ──────────────────
+    if not _modulo_instalado("tkinter"):
+        print("❌ tkinter ausente. Reinstale o Python marcando 'tcl/tk and IDLE'.")
+        sys.exit(1)
+
+    # ── 4. Resultado ─────────────────────────────────────────
+    if instalou_algo:
+        _reiniciar_programa()
+
+    print("✅ Todas as dependências estão instaladas.\n")
+
+
+if not FROZEN:
+    verificar_dependencias()
+
+
+
+# ── Célula 4 (código) ──────────────────────────────────────────────────
+
+# ── Biblioteca padrão ───────────────────────────────────────
+import os
+import csv
+import json
+import shutil
+import string
+import threading
+from datetime import datetime, timedelta
+
+# ── Interface gráfica (Tkinter) ─────────────────────────────
+import tkinter as tk
+import tkinter.font as tkfont
+from tkinter import ttk, messagebox
+
+# ── Manipulação de planilhas (openpyxl) ─────────────────────
+from openpyxl import load_workbook
+from openpyxl.utils import coordinate_to_tuple
+
+# ── Outlook (win32com) — opcional ───────────────────────────
+try:
+    import win32com.client
+    OUTLOOK_OK = True
+except ImportError:
+    OUTLOOK_OK = False
+    print("⚠️ win32com não instalado. Envio automático pelo Outlook indisponível.")
+    print("   Execute: pip install pywin32")
+
+
+# ── Célula 6 (código) ──────────────────────────────────────────────────
+
+
+
+
+# ============================================================
+# CÉLULA 0.0 — RAIZ DO APP, USUÁRIO E PASTAS POR USUÁRIO
+# ============================================================
+# Estrutura esperada na rede:
+#
+#   \\10.205.2.10\wfm\@WFM\Central RTA\
+#       ├── Projeto Automação ... .py
+#       └── Users_RTA\
+#             └── <usuario>\                (criada automaticamente)
+#                   ├── historico_alocacao.json
+#                   ├── botmaker_sessao.json
+#                   ├── botmaker_sessao_ls.json
+#                   └── botmaker_refresh_token.txt
+#
+# Downloads: sempre a pasta do usuário Windows logado
+#            (ex.: C:\Users\sizid001\Downloads)
+# ============================================================
+import os
+import re
+import getpass
+from pathlib import Path
+
+REDE_PADRAO = r"\\10.205.2.10\wfm\@WFM\Central RTA"
+
+def _pasta_app():
+    """Pasta do .exe (modo empacotado) ou do .py (modo script)."""
+    if FROZEN:
+        return Path(sys.executable).resolve().parent
+    try:
+        return Path(__file__).resolve().parent
+    except NameError:
+        return Path.cwd()
+
+
+def _carregar_config():
+    """
+    Lê config.json ao lado do programa (opcional).
+    Chaves aceitas:
+      "raiz_dados": caminho da pasta que contém Users_RTA
+      "atalhos"   : mesmo formato do dicionário ATALHOS
+    """
+    arq = _pasta_app() / "config.json"
+    if not arq.exists():
+        return {}
+    try:
+        with open(arq, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"⚠️ config.json inválido, ignorado: {e}")
+        return {}
+
+
+CONFIG = _carregar_config()
+
+
+def _descobrir_raiz_app():
+    """
+    Pasta que contém Users_RTA.
+
+    Prioridade:
+      1. Variável de ambiente RTA_RAIZ
+      2. "raiz_dados" do config.json
+      3. Executável: pasta de rede padrão (dados por usuário ficam na rede)
+      4. Script (.py): pasta do próprio arquivo
+    """
+    override = os.environ.get("RTA_RAIZ") or CONFIG.get("raiz_dados")
+    if override:
+        return Path(override)
+    if FROZEN:
+        return Path(REDE_PADRAO)
+    return _pasta_app()
+
+
+def _nome_usuario():
+    """Login do Windows, normalizado para uso como nome de pasta."""
+    try:
+        nome = getpass.getuser()
+    except Exception:
+        nome = Path.home().name
+    nome = re.sub(r'[\\/:*?"<>|\s]+', "_", (nome or "").strip())
+    return (nome or "desconhecido").lower()
+
+
+def _descobrir_downloads():
+    """Pasta Downloads do usuário (inclui variação com OneDrive)."""
+    home = Path.home()
+    for candidato in (home / "Downloads", home / "OneDrive" / "Downloads"):
+        if candidato.exists():
+            return candidato
+    return home / "Downloads"
+
+
+# ── Raiz e usuário ───────────────────────────────────────────
+RAIZ_APP = _descobrir_raiz_app()
+PASTA_USERS = RAIZ_APP / "Users_RTA"
+USUARIO = _nome_usuario()
+PASTA_USUARIO = PASTA_USERS / USUARIO
+
+# Cria Users_RTA\<usuario> no primeiro acesso.
+# Se a rede estiver indisponível, usa uma pasta local como contingência.
+try:
+    PASTA_USUARIO.mkdir(parents=True, exist_ok=True)
+except OSError as _erro:
+    PASTA_USUARIO = Path.home() / ".central_rta" / USUARIO
+    PASTA_USUARIO.mkdir(parents=True, exist_ok=True)
+    print(f"⚠️ Rede indisponível ({_erro}). Usando pasta local: {PASTA_USUARIO}")
+
+# ── Caminhos usados pelo restante do código (strings) ────────
+PASTA_DOWNLOADS = str(_descobrir_downloads())
+
+HISTORICO_FILE = str(PASTA_USUARIO / "historico_alocacao.json")
+
+BOTMAKER_SESSAO_FILE        = str(PASTA_USUARIO / "botmaker_sessao.json")
+BOTMAKER_SESSAO_LS_FILE     = str(PASTA_USUARIO / "botmaker_sessao_ls.json")
+BOTMAKER_REFRESH_TOKEN_FILE = str(PASTA_USUARIO / "botmaker_refresh_token.txt")
+
+print("✅ Pastas do usuário configuradas")
+print(f"   👤 Usuário   : {USUARIO}")
+print(f"   📁 Raiz app  : {RAIZ_APP}")
+print(f"   📁 Dados     : {PASTA_USUARIO}")
+print(f"   📥 Downloads : {PASTA_DOWNLOADS}")
+
+# ============================================================
+# ATALHOS RÁPIDOS — Pastas e Arquivos por Operação
+# ============================================================
+
+ATALHOS = {
+    "Cardif": [
+        {"tipo": "pasta", "nome": "Real Time",
+         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Cardif\6. Real Time"},
+        {"tipo": "arquivo", "nome": "WhatsApp Cardif.xlsx",
+         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Cardif\6. Real Time\WhatsApp Cardif.xlsx"},
+    ],
+    "Nickel": [
+        {"tipo": "pasta", "nome": "Real Time",
+         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Nickel\6. Real Time"},
+        {"tipo": "arquivo", "nome": "43.Service Level — Nickel.xlsm",
+         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Nickel\6. Real Time\43.Service Level Real Time e Monthly - Nickel NEW v1.xlsm"},
+    ],
+    "BlueLink": [
+        {"tipo": "pasta", "nome": "Real Time",
+         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\6. Real Time"},
+        {"tipo": "arquivo", "nome": "15.Service Level — Bluelink.xlsm",
+         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\6. Real Time\15.Service Level Real Time e Monthly - Bluelink 3.xlsm"},
+        {"tipo": "pasta", "nome": "Parcial de ABS",
+         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\7. Parcial de ABS"},
+        {"tipo": "arquivo", "nome": "ABS Bluelink_New.xlsm",
+         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\7. Parcial de ABS\ABS Bluelink_New.xlsm"},
+    ],
+    "Lexmark": [
+        {"tipo": "pasta", "nome": "Real Time",
+         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Lexmark\6. Real Time"},
+        {"tipo": "arquivo", "nome": "20.Service Level — Lexmark.xlsm",
+         "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Lexmark\6. Real Time\20.Service Level Real Time e Monthly - Lexmark.xlsm"},
+         
+         {"tipo": "pasta", "nome": "Reports",
+         "caminho": r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Lexmark\Genesys"},
+        {"tipo": "arquivo", "nome": "Lexmark - Upload Watcher.xlsm",
+         "caminho": r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Lexmark\Genesys\Lexmark - Upload Watcher.xlsm"},
+    ],
+
+    "Epson": [
+            {"tipo": "pasta", "nome": "Real Time",
+            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Epson\6. Real Time\Whatsapp"},
+            {"tipo": "arquivo", "nome": "Upload - Epson Botmaker.xlsm",
+            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Epson\6. Real Time\Whatsapp\Upload - Epson Botmaker.xlsm"},
+        ],
+
+    "Plurix": [
+            {"tipo": "pasta", "nome": "Reports",
+            "caminho": r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Plurix"},
+            {"tipo": "arquivo", "nome": "Plurix - Upload.xlsm",
+            "caminho": r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Plurix\Plurix - Upload.xlsm"},
+        ],
+
+
+
+    "Accor": [
+            {"tipo": "pasta", "nome": "Operacional_Amazon",
+            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor"},
+            {"tipo": "arquivo", "nome": "27.Service Level Real Time e Monthly - Accor (Amazon).xlsm",
+            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor\6. Real Time\27.Service Level Real Time e Monthly - Accor (Amazon).xlsm"},
+
+            {"tipo": "pasta", "nome": "Operacional_Care",
+            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor"},
+            {"tipo": "arquivo", "nome": "27.Service Level Real Time e Monthly - Accor - Custome Care (Amazon).xlsm",
+            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor\6. Real Time\27.Service Level Real Time e Monthly - Accor - Custome Care (Amazon).xlsm"},
+
+            
+        ],
+
+
+    "CitiBank": [
+            {"tipo": "pasta", "nome": "Yearly",
+            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Citibank\4 .Yearly"},
+            {"tipo": "arquivo", "nome": "YEARLY - Citibank.xlsm",
+            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Citibank\4 .Yearly\2026\YEARLY - Citibank.xlsm"},
+
+            {"tipo": "pasta", "nome": "6.Real Time",
+            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Citibank\6. Real Time"},
+            {"tipo": "arquivo", "nome": "05.Service Level Real Time e Monthly - Citibank.xlsm",
+            "caminho": r"\\10.205.2.10\wfm\@WFM\01. Operações\Citibank\6. Real Time\05.Service Level Real Time e Monthly - Citibank.xlsm"}
+
+        ],
+
+
+
+
+
+}
+
+
+
+
+import logging
+
+ARQ_LOG = Path(PASTA_USUARIO) / "app.log"
+logging.basicConfig(
+    filename=str(ARQ_LOG), level=logging.INFO, encoding="utf-8",
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+
+class _LogStream:
+    """Redireciona print() para o log quando não há console."""
+    def write(self, msg):
+        if msg and msg.strip():
+            logging.info(msg.rstrip())
+
+    def flush(self):
+        pass
+
+
+if FROZEN:
+    sys.stdout = sys.stderr = _LogStream()
+
+logging.info("%s v%s iniciado por %s", APP_NOME, APP_VERSAO, USUARIO)
+
+
+
+
+# ── Célula 7 (código) ──────────────────────────────────────────────────
+
+
+
+
+
+# ============================================================
+# FUNÇÃO GLOBAL: Gera nome da pasta do mês atual
+# ============================================================
+
+MESES_PT = {
+    1: "Janeiro", 2: "Fevereiro", 3: "Março",
+    4: "Abril", 5: "Maio", 6: "Junho",
+    7: "Julho", 8: "Agosto", 9: "Setembro",
+    10: "Outubro", 11: "Novembro", 12: "Dezembro",
+}
+
+def mes_atual_nome():
+    """Retorna nome do mês atual em português. Ex: 'Outubro'"""
+    return MESES_PT[datetime.now().month]
+
+def mes_atual_num_nome():
+    """Retorna '10 - Outubro' (para pastas com número)."""
+    m = datetime.now().month
+    return f"{m:02d} - {MESES_PT[m]}"
+
+def ano_atual():
+    """Retorna ano como string. Ex: '2026'"""
+    return str(datetime.now().year)
+
+def data_hoje_ddmm():
+    """Retorna 'DD.MM'. Ex: '13.10'"""
+    return datetime.now().strftime("%d.%m")
+
+def data_hoje_iso():
+    """Retorna 'YYYY-MM-DD'. Ex: '2026-10-13'"""
+    return datetime.now().strftime("%Y-%m-%d")
+
+# ── EPSON ───────────────────────────────────────────────────
+CAMINHOS_EPSON = {
+    "AGENT": r"\\10.205.2.10\wfm\@WFM\01. Operações\Epson\6. Real Time\Whatsapp\Bases\AGENT",
+    "BOT":   r"\\10.205.2.10\wfm\@WFM\01. Operações\Epson\6. Real Time\Whatsapp\Bases\BOT",
+}
+
+# ── CARDIF ──────────────────────────────────────────────────
+CAMINHOS_CARDIF = {
+    "REAL_TIME":      r"\\10.205.2.10\wfm\@WFM\01. Operações\Cardif\6. Real Time",
+    "WHATSAPP_XLSX":  r"\\10.205.2.10\wfm\@WFM\01. Operações\Cardif\6. Real Time\WhatsApp Cardif.xlsx",
+    "HORA_HORA":      r"Y:\Cardif\02. Hora Hora Cardif\2026",
+    "JUSTIFICATIVAS": r"Y:\Cardif\01. Operações\Arquivos de Justificativa\2026",
+}
+
+# Dados de e-mail Cardif
+CARDIF_EMAIL = {
+    "remetente": "Mailbox Foundever Brazil MIS Reports",
+    "assunto_voz": "Cardif - Pontual de Volumetria Voz",
+    "assunto_chat": "Cardif - Pontual de Volumetria Chat",
+    "assunto_logados": "Cardif - Parcial Agentes Logados WhatsApp",
+    "cms_filtro": "Agent: 106001-106252",
+    "cms_relatorio": "LOGIN/LOGOUT POR DATA",
+}
+
+
+
+# ── LEXMARK ─────────────────────────────────────────────────
+CAMINHOS_LEXMARK = {
+    "INTRADAY_BASE": r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Lexmark\Genesys\Bases\Intraday\BRAZIL_PT_BAU",
+    "REAL_TIME":     r"X:\@WFM\01. Operações\Lexmark\6. Real Time",
+}
+
+def lexmark_intraday_path():
+    return os.path.join(CAMINHOS_LEXMARK["INTRADAY_BASE"], ano_atual(), mes_atual_num_nome())
+
+def lexmark_nome_esperado():
+    return f"{data_hoje_iso()} Detalhe do desempenho da fila.csv"
+
+# ── PLURIX ──────────────────────────────────────────────────
+CAMINHOS_PLURIX = {
+    "BASES":          r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Plurix\Bases",
+    "RETROATIVO_BASE": r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Plurix\Retroativo",
+}
+
+def plurix_retroativo_path():
+    r"""Gera caminho do Retroativo Plurix com mês atual. Ex: ...\Retroativo\Outubro"""
+    return os.path.join(CAMINHOS_PLURIX["RETROATIVO_BASE"], mes_atual_nome())
+
+def plurix_retroativo_nome():
+    """Gera nome esperado do retroativo. Ex: '13.10 BuscaAtendimentos.csv'"""
+    return f"{data_hoje_ddmm()} BuscaAtendimentos.csv"
+
+# ── NICKEL ──────────────────────────────────────────────────
+CAMINHOS_NICKEL = {
+    "REAL_TIME":         r"Z:\@WFM\01. Operações\Nickel\6. Real Time",
+    "LOGIN_LOGOUT_BASE": r"\\10.205.2.10\wfm\@WFM\3. Reports\Atualização de Relatórios\Nickel\Login_Logout",
+}
+
+def nickel_login_logout_path():
+    """Gera caminho da pasta do mês. Ex: ...\\2026\\10-Outubro"""
+    m = datetime.now().month
+    pasta_mes = f"{m:02d}-{MESES_PT[m]}"
+    return os.path.join(CAMINHOS_NICKEL["LOGIN_LOGOUT_BASE"], ano_atual(), pasta_mes)
+
+def nickel_login_logout_nome():
+    """Gera nome do arquivo do dia. Ex: Login_Logout_2026-10-14.xls"""
+    return f"Login_Logout_{data_hoje_iso()}.xls"
+
+# ── BLUELINK ────────────────────────────────────────────────
+CAMINHOS_BLUELINK = {
+    "ABS":          r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\7. Parcial de ABS",
+    "ABS_PLANILHA": r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\7. Parcial de ABS\ABS Bluelink_New.xlsm",
+    "REAL_TIME":    r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\6. Real Time",
+    "VOL_PLANILHA": r"\\10.205.2.10\wfm\@WFM\01. Operações\Bluelink\6. Real Time\15.Service Level Real Time e Monthly - Bluelink 3.xlsm",
+}
+
+
+CAMINHOS_ACCOR = {
+    "REAL TIME CARE": r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor\6. Real Time",
+
+    "REAL_TIME":    r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor\6. Real Time",
+
+    "ACCOR_AMAZON": r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor\6. Real Time\27.Service Level Real Time e Monthly - Accor (Amazon).xlsm",
+
+    "ACCO_CARE": r"\\10.205.2.10\wfm\@WFM\01. Operações\Accor\6. Real Time\"27.Service Level Real Time e Monthly - Accor - Custome Care (Amazon).xlsm"
+
+
+}
+'''def ACCOR_retroativo_path():
+    r"""Gera caminho do Retroativo ACCOR com mês atual. Ex: ...\Retroativo\Outubro"""
+    return os.path.join(CAMINHOS_ACCOR["RETROATIVO_BASE"], mes_atual_nome())
+
+def ACCOR_retroativo_nome():
+    """Gera nome esperado do retroativo. Ex: '13.10 BuscaAtendimentos.csv'"""
+    return f"{data_hoje_ddmm()} BuscaAtendimentos.csv"'''
+
+
+CAMINHOS_EPSON = {
+    "AGENT": r"\\10.205.2.10\wfm\@WFM\01. Operações\Epson\6. Real Time\Whatsapp\Bases\AGENT",
+    "BOT":   r"\\10.205.2.10\wfm\@WFM\01. Operações\Epson\6. Real Time\Whatsapp\Bases\BOT",
+}
+
+
+
+
+# ── COTY ────────────────────────────────────────────────────
+CAMINHOS_COTY = {}
+
+# ── Resumo ──
+print("✅ Caminhos centralizados carregados!")
+print(f"📂 Downloads: {PASTA_DOWNLOADS}")
+print(f"📅 Mês atual: {mes_atual_nome()} ({mes_atual_num_nome()})")
+print(f"📅 Data: {data_hoje_ddmm()} / {data_hoje_iso()}")
+print(f"\n🔵 PLURIX:")
+print(f"   📂 Bases: {CAMINHOS_PLURIX['BASES']}")
+print(f"   📂 Retroativo: {plurix_retroativo_path()}")
+print(f"   📄 Nome retroativo: {plurix_retroativo_nome()}")
+print(f"\n💎 LEXMARK:")
+print(f"   📂 Intraday: {lexmark_intraday_path()}")
+print(f"   📄 Nome: {lexmark_nome_esperado()}")
+print(f"\n🟣 BLUELINK:")
+print(f"   📂 ABS: {CAMINHOS_BLUELINK['ABS']}")
+print(f"   📄 ABS Planilha: {CAMINHOS_BLUELINK['ABS_PLANILHA']}")
+print(f"   📂 Volumetria: {CAMINHOS_BLUELINK['REAL_TIME']}")
+print(f"   📄 Vol Planilha: {CAMINHOS_BLUELINK['VOL_PLANILHA']}")
+print(f"\n🟢 NICKEL:")
+print(f"   📂 Login-Logout: {nickel_login_logout_path()}")
+print(f"   📄 Nome: {nickel_login_logout_nome()}")
+
+
+# ── Célula 8 (markdown) ────────────────────────────────────────────────
+# #### ============================================================
+# #### CÉLULA 1 — OPERAÇÕES, VERIFICAÇÕES E TEMPLATES
+# #### ============================================================
+
+# ── Célula 9 (código) ──────────────────────────────────────────────────
+
+OPERACOES = {
+    "Epson": {
+        "cor": "#F2D45C",
+        "icone": "📡",
+        "descricao": "Gestão de bases WhatsApp (Botmaker)",
+        "sistema": "CMS / Botmaker",
+        "horario": "08:00 – 20:12",
+        "bases": {
+            "AGENT": {
+                "destino": CAMINHOS_EPSON["AGENT"],
+                "arquivos": [
+                    {"nome_destino": "operatorsSessionsDebug", "extensao": ".tsv",
+                     "descricao": "Sessões de Operadores (Debug)"},
+                    {"nome_destino": "users", "extensao": ".tsv",
+                     "descricao": "Usuários Agentes"},
+                ],
+            },
+            "BOT": {
+                "destino": CAMINHOS_EPSON["BOT"],
+                "arquivos": [
+                    {"nome_destino": "users", "extensao": ".tsv",
+                     "descricao": "Usuários Bot"},
+                ],
+            },
+        },
+        "verificacoes_email": [
+            {"nome": "Upload Base WhatsApp",
+             "descricao": "Verificar se dados do Botmaker subiram",
+             "remetente": "Botmaker",
+             "assunto_referencia": "Upload Base Epson",
+             "tipo": "checklist",
+             "checklist": ["Dados completos", "Período correto",
+                           "Sem erros/campos vazios", "Volume compatível"]},
+            {"nome": "Justificativa de Abandono",
+             "descricao": "Verificar abandono em L1 ou L2",
+             "remetente": "CMS",
+             "assunto_referencia": "Abandonos Epson",
+             "tipo": "checklist",
+             "checklist": ["Verificar abandono L1", "Verificar abandono L2",
+                           "Preparar justificativa", "Registrar horário e volume"]},
+        ],
+    },
+    # ============================================================
+    # CARDIF — 1 BASES: Logados + E-mails (Validação)
+    # ============================================================
+    "Cardif": {
+        "cor": "#FF8A7A",
+        "icone": "🔴",
+        "descricao": "Justificativas VOZ/CHAT + Parcial Logados (CMS)",
+        "sistema": "CMS / OLOS",
+        "horario": "08:00 – 22:00",
+        "bases": {
+            "Parcial de Logados": {
+                "destino": CAMINHOS_CARDIF["REAL_TIME"],
+                "tipo_alocacao": "colar_clipboard",
+                "planilha": CAMINHOS_CARDIF["WHATSAPP_XLSX"],
+                "sheet": "Base CMS",
+                "celula": "A2",
+                "max_colunas": 6,
+                "colunas_esperadas": ["ID de Login", "Nome Agente", "Data",
+                                      "Horário do Login", "Horário do Logout", "Ramal"],
+                "arquivos": [
+                    {"nome_destino": "WhatsApp Cardif", "extensao": ".xlsx",
+                     "descricao": "Colar dados do clipboard (CMS) na aba Base CMS (A2)"},
+                ],
+            },
+        },
+        "verificacoes_email": [
+            # ════════════════════════════════════════════════
+            # 1. PONTUAL VOZ — Justificativa
+            # ════════════════════════════════════════════════
+            {"nome": "Pontual VOZ — Justificativa",
+             "descricao": "Verificar SLA VOZ e justificar se < 80%",
+             "remetente": CARDIF_EMAIL["remetente"],
+             "assunto_referencia": CARDIF_EMAIL["assunto_voz"],
+             "tipo": "justificativa_voz",
+             "checklist": [
+                 "-mail recebido (Pontual Voz)",
+                 "Verificar SLA ≥ 80%?",
+                 "Se ≥ 80%: usar template OK",
+                 "Se < 80%: identificar desvio VOLUME por intervalo",
+                 "Se < 80%: identificar desvio AHT por intervalo",
+                 "Se < 80%: identificar intervalo com MENOR NS",
+                 "Preencher campos no Gerador de Justificativa",
+                 "Verificar prévia do texto",
+                 "Copiar justificativa OU usar envio pelo Outlook",
+                 "Responder a todos (SEM histórico)",
+                 "Colar texto e enviar"]},
+
+            # ════════════════════════════════════════════════
+            # 2. PONTUAL CHAT — Justificativa
+            # ════════════════════════════════════════════════
+            {"nome": "Pontual CHAT — Justificativa",
+             "descricao": "Verificar SLA CHAT (SAC/Sinistro + Portal Segurado)",
+             "remetente": CARDIF_EMAIL["remetente"],
+             "assunto_referencia": CARDIF_EMAIL["assunto_chat"],
+             "tipo": "justificativa_chat",
+             "checklist": [
+                 "E-mail recebido (Pontual Chat)",
+                 "Verificar SLA SAC & Sinistro ≥ 80%?",
+                 "Verificar SLA Portal Segurado ≥ 80%?",
+                 "Se SAC < 80%: desvio VOLUME por intervalo",
+                 "Se SAC < 80%: desvio AHT por intervalo",
+                 "Se SAC < 80%: intervalo com menor NS",
+                 "Preencher campos no Gerador de Justificativa",
+                 "Verificar prévia do texto",
+                 "Copiar justificativa OU usar envio pelo Outlook",
+                 "Responder a todos (SEM histórico)",
+                 "Colar texto e enviar"]},
+
+            # ════════════════════════════════════════════════
+            # 3. PARCIAL DE AGENTES LOGADOS (checklist do envio)
+            # ════════════════════════════════════════════════
+            {"nome": "Parcial de Agentes Logados",
+             "descricao": "CMS → Base CMS → RESUMO → tabela no e-mail",
+             "remetente": "CMS (extração manual)",
+             "assunto_referencia": CARDIF_EMAIL["assunto_logados"],
+             "tipo": "parcial_logados",
+             "checklist": [
+                 "Abrir CMS → LOGIN/LOGOUT POR DATA",
+                 "Filtrar Agent: 106001-106252",
+                 "Exportar → Área de Armazenamento",
+                 "  └ Separador: (guia) / Delimitador: (nenhum)",
+                 "  └ ☑ Valores Nulos como Zero",
+                 "  └ ☐ Legendas e Cabeçalhos (DESMARCADO)",
+                 "  └ ☑ Tempos em Segundos",
+                 "Usar 'Alocar arquivo' para colar na planilha",
+                 "Aba 'RESUMO' → verificar tabelas atualizaram",
+                 "Copiar tabelas até INTERVALO ANTERIOR (30 em 30)",
+                 "  └ WhatsApp: até intervalo fechado anterior",
+                 "  └ WhatsApp After Sales: até intervalo fechado anterior",
+                 "Responder a todos (SEM histórico)",
+                 "Colar tabelas no e-mail",
+                 "Enviar"],
+             "arquivo_ref": {
+                 "caminho": CAMINHOS_CARDIF["WHATSAPP_XLSX"],
+                 "sheet_cola": "Base CMS",
+                 "sheet_copia": "RESUMO",
+                 "intervalo_min": 30,
+                 "cms_filtro": CARDIF_EMAIL["cms_filtro"],
+                 "cms_relatorio": CARDIF_EMAIL["cms_relatorio"]}},
+        ],
+    },
+
+    "Lexmark": {
+        "cor": "#5CC8F2",
+        "icone": "💎",
+        "descricao": "Upload Intraday Genesys (BRAZIL_PT_BAU)",
+        "sistema": "Genesys",
+        "horario": "06:00 – 20:00",
+        "bases": {
+            "Intraday BRAZIL_PT_BAU": {
+                "destino": lexmark_intraday_path(),
+                "arquivos": [
+                    {"nome_destino": lexmark_nome_esperado().replace(".csv", ""),
+                     "extensao": ".csv",
+                     "descricao": f"Detalhe desempenho fila ({datetime.now().strftime('%d/%m/%Y')})"},
+                ],
+            },
+        },
+        "verificacoes_email": [
+            {"nome": "Pontual de Volumetria",
+             "descricao": "Atualizar sheets Fechamento e Capa",
+             "remetente": "Genesys",
+             "assunto_referencia": "Lexmark - Pontual",
+             "tipo": "checklist",
+             "checklist": [
+                 "Download Genesys realizado",
+                 "Arquivo alocado na pasta Intraday",
+                 "Abrir planilha Lexmark Real Time",
+                 "Atualizar sheet 'Fechamento'",
+                 "Atualizar sheet 'Capa'",
+                 "Salvar",
+                 "Enviar pontual por e-mail"]},
+        ],
+    },
+
+    # ============================================================
+    # PLURIX — 2 BASES: Upload + Retroativo (com mês dinâmico)
+    # ============================================================
+    "Plurix": {
+        "cor": "#4DA3FF",
+        "icone": "🔵",
+        "descricao": "Upload base + Retroativo diário (HI Platform)",
+        "sistema": "CMS / HI Platform",
+        "horario": "08:00 – 20:00",
+        "bases": {
+            # ── Base principal (substitui sempre) ──
+            "Bases (Upload)": {
+                "destino": CAMINHOS_PLURIX["BASES"],
+                "arquivos": [
+                    {"nome_destino": "BuscaAtendimentos",
+                     "extensao": ".csv",
+                     "descricao": "Base principal (renomear do download → substitui anterior)"},
+                ],
+            },
+            # ── Retroativo (acumula por dia, pasta do mês) ──
+            "Retroativo": {
+                "destino": plurix_retroativo_path(),
+                "arquivos": [
+                    {"nome_destino": plurix_retroativo_nome().replace(".csv", ""),
+                     "extensao": ".csv",
+                     "descricao": f"Retroativo do dia ({datetime.now().strftime('%d/%m/%Y')}) — renomear do download"},
+                ],
+            },
+        },
+        "verificacoes_email": [],
+    },
+    
+
+    
+    "Accor": {
+        "cor": "#1A365D",
+        "icone": "🔵",
+        "descricao": "Upload base + Retroativo diário (Amazon)",
+        "sistema": "CMS / Amazon",
+        "horario": "08:00 – 20:00",
+        "bases": {
+            # ── Base principal (substitui sempre) ──
+            "Bases (Upload)": {
+                "destino": CAMINHOS_ACCOR["REAL TIME CARE"],
+                "arquivos": [
+                    {"nome_destino": "Real_Time_CARE",
+                     "extensao": ".csv",
+                     "descricao": "Base principal (renomear do download → substitui anterior)"},
+                ],
+            },
+            
+        },
+        "verificacoes_email": [],
+    },
+
+
+    "CitiBank": {
+        "cor": "#1A365D",
+        "icone": "🔵",
+        "descricao": "Upload base + Retroativo diário (Amazon)",
+        "sistema": "CMS / Amazon",
+        "horario": "08:00 – 20:00",
+        "bases": {
+            # ── Base principal (substitui sempre) ──
+            "Bases (Upload)": {
+                "destino":"Ainda em criação" '''CAMINHOS_ACCOR["BASES"]''',
+                "arquivos": [
+                    {"nome_destino": "Ainda em criação",
+                     "extensao": ".csv",
+                     "descricao": "Processo em criação : Base principal (renomear do download → substitui anterior)"},
+                ],
+            },
+            
+        },
+        "verificacoes_email": [],
+    },
+
+    # ============================================================
+    # BLUELINK — 2 BASES: ABS + Volumetria (colar em planilha)
+    # ============================================================
+    "BlueLink": {
+        "cor": "#7C83FF",
+        "icone": "🟣",
+        "descricao": "ABS e Volumetria — copia base para planilha (Odigo)",
+        "sistema": "Odigo / Sales",
+        "horario": "04:00 – 00:00",
+        "bases": {
+            "ABS": {
+                "destino": CAMINHOS_BLUELINK["ABS"],
+                "tipo_alocacao": "colar_planilha",
+                "planilha": CAMINHOS_BLUELINK["ABS_PLANILHA"],
+                "sheet": "JOGAR_BASE",
+                "celula": "A1",
+                "linha_inicio_origem": 2,
+                "arquivos": [
+                    {"nome_destino": "ABS Bluelink_New", "extensao": ".xlsm",
+                     "descricao": "Colar base baixada na aba JOGAR_BASE (A1)"},
+                ],
+            },
+            "Volumetria": {
+                "destino": CAMINHOS_BLUELINK["REAL_TIME"],
+                "tipo_alocacao": "colar_planilha",
+                "planilha": CAMINHOS_BLUELINK["VOL_PLANILHA"],
+                "sheet": "Base_Odigo",
+                "celula": "A1",
+                "linha_inicio_origem": 2,
+                "arquivos": [
+                    {"nome_destino": "15.Service Level Real Time e Monthly - Bluelink 3",
+                     "extensao": ".xlsm",
+                     "descricao": "Colar base baixada na aba Base_Odigo (A1)"},
+                ],
+            },
+        },
+        "verificacoes_email": [],
+    },
+    # ============================================================
+    # NICKEL — 1 BASE: LOGIN-LOGOUT (SALVAMENTO)
+    # ============================================================
+    "Nickel": {
+        "cor": "#62D9C0",
+        "icone": "🟢",
+        "descricao": "Fechamento e Login-Logout (Odigo)",
+        "sistema": "Odigo",
+        "horario": "04:00 – 15:00",
+        "bases": {
+            "Login-Logout": {
+                "destino": nickel_login_logout_path(),
+                "arquivos": [
+                    {"nome_destino": nickel_login_logout_nome().replace(".xls", ""),
+                     "extensao": ".xls",
+                     "descricao": f"Login/Logout do dia ({datetime.now().strftime('%d/%m/%Y')}) — acumula por dia"},
+                ],
+            },
+        },
+        "verificacoes_email": [],
+    },
+
+    # ── Demais ──
+    "Coty": {
+        "cor": "#D9C2A0", "icone": "🟤",
+        "descricao": "Validação de volumetria",
+        "sistema": "CMS", "horario": "08:00 – 18:00",
+        "bases": {}, "verificacoes_email": [],
+    },
+
+}
+
+# ── Templates ──
+TEMPLATES = {
+    "voz_abaixo": (
+        "Impacto no SLA devido ao desvio de Volume {desvio_vol}% "
+        "e desvio de AHT de {desvio_aht}%.\n\n"
+        "Ao analisar os intervalos, observa-se desvio de Volume "
+        "em {intervalos_vol}, sendo o maior impacto registrado "
+        "no intervalo das {maior_vol_hora}, com {maior_vol_pct}%, "
+        "seguido pelo das {segundo_vol_hora}, com {segundo_vol_pct}%.\n\n"
+        "O desvio de AHT ocorreu em {intervalos_aht}, sendo o maior "
+        "impacto registrado no intervalo das {maior_aht_hora}, com "
+        "{maior_aht_pct}%, seguido pelo das {segundo_aht_hora}, com "
+        "{segundo_aht_pct}%.\n\n"
+        "Até o momento, o intervalo com menor NS é o das "
+        "{menor_ns_hora}, com {menor_ns_pct}%. Estamos atuando "
+        "junto a operação para a recuperação do resultado.\n\n"
+        "Qualquer dúvida estou a disposição."
+    ),
+    "voz_ok": (
+        "Estamos entregando o SLA do dia. Seguiremos atuando "
+        "junto a operação para manter o resultado.\n\n"
+        "Qualquer dúvida estou a disposição."
+    ),
+    "chat_sac_abaixo": (
+        "SAC & Sinistro: Impacto no SLA devido ao desvio de "
+        "Volume de {desvio_vol}%.\n\n"
+        "Ao analisar os intervalos, observa-se desvio de Volume "
+        "em {intervalos_vol}, sendo o maior impacto registrado "
+        "no intervalo das {maior_vol_hora}, com {maior_vol_pct}%, "
+        "seguido pelo das {segundo_vol_hora}, com {segundo_vol_pct}%.\n\n"
+        "Também tivemos desvio de AHT no intervalo das "
+        "{maior_aht_hora} com {maior_aht_pct}%.\n\n"
+        "Até o momento, o intervalo com menor NS é o das "
+        "{menor_ns_hora}, com {menor_ns_pct}%. Estamos atuando "
+        "junto a operação para a recuperação do resultado.\n\n"
+        "Portal Segurado: Estamos entregando o SLA do dia. "
+        "Seguiremos atuando junto a operação para manter o resultado.\n\n"
+        "Qualquer dúvida estou a disposição."
+    ),
+    "chat_sac_ok": (
+        "SAC & Sinistro: Estamos entregando o SLA do dia. "
+        "Seguiremos atuando junto a operação para manter o resultado.\n\n"
+        "Portal Segurado: Estamos entregando o SLA do dia. "
+        "Seguiremos atuando junto a operação para manter o resultado.\n\n"
+        "Qualquer dúvida estou a disposição."
+    ),
+}
+
+# ============================================================
+# RESUMO
+# ============================================================
+
+print("✅ Operações e templates carregados!")
+print(f"📊 {len(OPERACOES)} operações\n")
+
+for nome, dados in OPERACOES.items():
+    nb = len(dados.get("bases", {}))
+    nv = len(dados.get("verificacoes_email", []))
+    na = sum(len(b["arquivos"]) for b in dados.get("bases", {}).values())
+    status = "✅" if (nb > 0 or nv > 0) else "⏳"
+    print(f"  {status} {dados['icone']} {nome}: "
+          f"{nb} base(s) ({na} arq), {nv} verificação(ões)")
+
+print(f"\n🔵 PLURIX detalhes:")
+print(f"   📂 Upload: {CAMINHOS_PLURIX['BASES']}")
+print(f"      📄 BuscaAtendimentos.csv (substitui)")
+print(f"   📂 Retroativo: {plurix_retroativo_path()}")
+print(f"      📄 {plurix_retroativo_nome()} (acumula)")
+print(f"\n🟣 BLUELINK detalhes:")
+print(f"   📂 ABS: {CAMINHOS_BLUELINK['ABS']}")
+print(f"      📄 Planilha: ABS Bluelink_New.xlsm → aba JOGAR_BASE (A1)")
+print(f"   📂 Volumetria: {CAMINHOS_BLUELINK['REAL_TIME']}")
+print(f"      📄 Planilha: 15.Service Level... → aba Base_Odigo (A1)")
+print(f"\n📝 {len(TEMPLATES)} templates")
+
+
+# ── Célula 10 (markdown) ────────────────────────────────────────────────
+# #### ============================================================
+# #### CÉLULA 2 — INTERFACE (rode 2A, 2B, 2C e 2D em ordem)
+# #### ============================================================
+
+# ── Célula 11 (markdown) ────────────────────────────────────────────────
+# #### ============================================================
+# #### CÉLULA 2A — TEMA, UTILITÁRIOS E COMPONENTES
+# #### ============================================================
+
+# ── Célula 12 (código) ──────────────────────────────────────────────────
+
+
+class C:
+    INK = "#14161B"
+    SIDEBAR = "#0E1014"
+    SIDE_HOVER = "#181B21"
+    SURFACE = "#1C1F26"
+    RAISED = "#252932"
+    HOVER = "#2E333D"
+    LINE = "#373D49"
+    TEXT = "#F3F0EA"
+    TEXT2 = "#BAB5AB"
+    MUTED = "#7F7B73"
+    ACCENT = "#A594FF"
+    OK = "#5FD39E"
+    WARN = "#F2B84B"
+    ERR = "#F2665A"
+    RAIL_PAST = "#463F75"
+    RAIL_NEXT = "#2B2F39"
+    RAIL_OFF = "#202329"
+
+
+TOM = {"ok": C.OK, "warn": C.WARN, "err": C.ERR}
+DIAS_PT = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira",
+           "sexta-feira", "sábado", "domingo"]
+
+
+class F:
+    UI = "Segoe UI"
+    NUM = "Bahnschrift"
+
+
+def init_fonts(root):
+    fams = set(tkfont.families(root))
+    F.UI = next((f for f in ("Segoe UI", "Inter", "DejaVu Sans") if f in fams), "TkDefaultFont")
+    F.NUM = next((f for f in ("Bahnschrift", "Inter Display", "Segoe UI", "DejaVu Sans") if f in fams), F.UI)
+
+
+def fnt(size, weight="normal", num=False):
+    return (F.NUM if num else F.UI, size, weight)
+
+
+def fmt_size(b):
+    if b < 1024:
+        return f"{b} B"
+    if b < 1048576:
+        return f"{b / 1024:.1f} KB"
+    return f"{b / 1048576:.1f} MB"
+
+
+def list_downloads():
+    exts = {".xlsx", ".xls", ".csv", ".tsv", ".txt", ".pdf", ".xlsm"}
+    out = []
+    try:
+        nomes = os.listdir(PASTA_DOWNLOADS)
+    except OSError:
+        return out
+    for f in nomes:
+        if f.startswith("~$"):
+            continue
+        p = os.path.join(PASTA_DOWNLOADS, f)
+        ext = os.path.splitext(f)[1].lower()
+        if ext not in exts or not os.path.isfile(p):
+            continue
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        if st.st_size < 100:
+            continue
+        mt = datetime.fromtimestamp(st.st_mtime)
+        out.append({"nome": f, "caminho": p, "ext": ext, "tam_fmt": fmt_size(st.st_size),
+                    "mtime": mt, "mod": mt.strftime("%d/%m/%Y %H:%M")})
+    out.sort(key=lambda x: x["mtime"], reverse=True)
+    return out
+
+
+def check_dest(dest_dir, filename):
+    if not os.path.isdir(dest_dir):
+        return {"existe": False, "acessivel": False}
+    p = os.path.join(dest_dir, filename)
+    if os.path.exists(p):
+        mt = datetime.fromtimestamp(os.path.getmtime(p))
+        return {"existe": True, "acessivel": True, "tam": fmt_size(os.path.getsize(p)),
+                "mtime": mt, "mod": mt.strftime("%d/%m/%Y %H:%M")}
+    return {"existe": False, "acessivel": True}
+
+
+def load_hist():
+    if os.path.exists(HISTORICO_FILE):
+        try:
+            with open(HISTORICO_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+
+def save_hist(reg):
+    h = load_hist()
+    h.insert(0, reg)
+    try:
+        with open(HISTORICO_FILE, "w", encoding="utf-8") as f:
+            json.dump(h[:200], f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def hist_dt(r):
+    try:
+        return datetime.strptime(r.get("data", ""), "%d/%m/%Y %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def hist_periodo(dias=None, operacao=None):
+    corte = (datetime.now() - timedelta(days=dias - 1)).date() if dias else None
+    out = []
+    for r in load_hist():
+        dt = hist_dt(r)
+        if dt is None or (corte and dt.date() < corte):
+            continue
+        if operacao and r.get("operacao") != operacao:
+            continue
+        out.append((dt, r))
+    return out
+
+
+def hist_tom(r):
+    s = r.get("status", "")
+    if "Problema" in s:
+        return "err"
+    if "ressalva" in s:
+        return "warn"
+    if s.startswith(("Sucesso", "Verificado")):
+        return "ok"
+    return "err"
+
+
+def rotulo_status(r):
+    s = r.get("status", "")
+    if s == "Sucesso":
+        return "Alocado"
+    if s.startswith("Verificado — "):
+        return s.split("— ", 1)[1]
+    return s or "—"
+
+
+def op_configurada(d):
+    return bool(d.get("bases")) or bool(d.get("verificacoes_email"))
+
+
+def parse_horario(h):
+    try:
+        a, b = [p.strip() for p in h.replace("–", "-").split("-")]
+        ini = int(a[:2]) * 60 + int(a[3:5])
+        fim = int(b[:2]) * 60 + int(b[3:5])
+        return ini, fim if fim > ini else fim + 1440
+    except (ValueError, IndexError, AttributeError):
+        return None
+
+
+def em_horario(h, now=None):
+    j = parse_horario(h)
+    if not j:
+        return False
+    now = now or datetime.now()
+    m = now.hour * 60 + now.minute
+    return j[0] <= m < j[1]
+
+
+def intervalo(now, passo=30):
+    ini = now.replace(minute=now.minute - now.minute % passo, second=0, microsecond=0)
+    return ini, ini + timedelta(minutes=passo)
+
+
+def fmt_quando(dt, now=None):
+    now = now or datetime.now()
+    if dt.date() == now.date():
+        return f"hoje às {dt:%H:%M}"
+    if dt.date() == (now - timedelta(days=1)).date():
+        return f"ontem às {dt:%H:%M}"
+    return dt.strftime("%d/%m às %H:%M")
+
+
+def status_destino(info):
+    if not info.get("acessivel"):
+        return "Pasta inacessível", C.ERR
+    if not info["existe"]:
+        return "Ainda não existe", C.WARN
+    cor = C.OK if info["mtime"].date() == datetime.now().date() else C.WARN
+    return f"Atualizado {fmt_quando(info['mtime'])}", cor
+
+
+def juntar(itens):
+    return itens[0] if len(itens) == 1 else ", ".join(itens[:-1]) + " e " + itens[-1]
+
+
+def run_async(widget, fn, done):
+    box = {}
+
+    def work():
+        try:
+            box["r"] = fn()
+        except Exception as e:
+            box["e"] = e
+
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+
+    def poll():
+        if not widget.winfo_exists():
+            return
+        if t.is_alive():
+            widget.after(60, poll)
+        else:
+            done(box.get("r"))
+
+    widget.after(60, poll)
+
+
+def clicavel(frame, command, bg, hover):
+    def pintar(cor):
+        def walk(w):
+            try:
+                if w.cget("bg") in (bg, hover):
+                    w.configure(bg=cor)
+            except tk.TclError:
+                pass
+            for c in w.winfo_children():
+                walk(c)
+        if frame.winfo_exists():
+            walk(frame)
+
+    def bind(w):
+        w.bind("<Enter>", lambda e: pintar(hover), add="+")
+        w.bind("<Leave>", lambda e: pintar(bg), add="+")
+        w.bind("<Button-1>", lambda e: command(), add="+")
+        try:
+            w.configure(cursor="hand2")
+        except tk.TclError:
+            pass
+        for c in w.winfo_children():
+            bind(c)
+
+    bind(frame)
+
+
+def ponto(parent, cor, bg, tam=8):
+    c = tk.Canvas(parent, width=tam + 2, height=tam + 2, bg=bg, highlightthickness=0)
+    c.create_oval(1, 1, tam + 1, tam + 1, fill=cor, outline="")
+    return c
+
+
+def pill(parent, text, cor, bg=None):
+    return tk.Label(parent, text=text, font=fnt(8, "bold"), fg=cor, bg=bg or parent.cget("bg"),
+                    padx=8, pady=1, highlightthickness=1, highlightbackground=cor)
+
+
+def secao(parent, titulo, detalhe="", bg=C.INK, pady=(26, 10)):
+    f = tk.Frame(parent, bg=bg)
+    f.pack(fill="x", padx=28, pady=pady)
+    tk.Label(f, text=titulo, font=fnt(13, "bold"), bg=bg, fg=C.TEXT).pack(side="left")
+    if detalhe:
+        tk.Label(f, text=detalhe, font=fnt(9), bg=bg, fg=C.MUTED).pack(side="left", padx=(12, 0), pady=(3, 0))
+    return f
+
+
+def vazio(parent, titulo, texto, padx=28):
+    f = tk.Frame(parent, bg=C.SURFACE, padx=22, pady=18)
+    f.pack(fill="x", padx=padx)
+    tk.Label(f, text=titulo, font=fnt(10, "bold"), bg=C.SURFACE, fg=C.TEXT, anchor="w").pack(fill="x")
+    tk.Label(f, text=texto, font=fnt(9), bg=C.SURFACE, fg=C.TEXT2, anchor="w",
+             justify="left", wraplength=640).pack(fill="x", pady=(2, 0))
+    return f
+
+
+def aviso(parent, texto, tom, bg=C.SURFACE):
+    f = tk.Frame(parent, bg=bg)
+    f.pack(fill="x", pady=2)
+    tk.Frame(f, bg=TOM[tom], width=3).pack(side="left", fill="y")
+    tk.Label(f, text=texto, font=fnt(9), bg=bg, fg=TOM[tom], anchor="w", justify="left",
+             wraplength=640, padx=10, pady=4).pack(side="left", fill="x")
+    return f
+
+
+class Btn(tk.Label):
+    KINDS = {
+        "primary": (C.ACCENT, C.INK, "#BCAFFF"),
+        "ghost": (C.RAISED, C.TEXT, C.HOVER),
+        "quiet": (C.INK, C.TEXT2, C.SURFACE),
+        "ok": (C.OK, C.INK, C.OK),
+        "danger": (C.ERR, C.TEXT, "#FF7A70"),
+    }
+
+    def __init__(self, parent, text, command=None, kind="ghost", size=10, padx=18, pady=8, enabled=True):
+        super().__init__(parent, text=text, font=fnt(size, "bold"), padx=padx, pady=pady, takefocus=1,
+                         highlightthickness=2, highlightbackground=parent.cget("bg"), highlightcolor=C.ACCENT)
+        self.command, self.kind, self.enabled = command, kind, enabled
+        self._paint()
+        self.bind("<Enter>", lambda e: self._paint(True))
+        self.bind("<Leave>", lambda e: self._paint())
+        self.bind("<ButtonRelease-1>", self._release)
+        self.bind("<Return>", lambda e: self._click())
+        self.bind("<space>", lambda e: self._click())
+
+    def _paint(self, hover=False):
+        if not self.enabled:
+            self.configure(bg=C.RAISED, fg=C.MUTED, cursor="arrow")
+            return
+        bg, fg, hv = self.KINDS[self.kind]
+        self.configure(bg=hv if hover and self.command else bg, fg=fg,
+                       cursor="hand2" if self.command else "arrow")
+
+    def _release(self, e):
+        if 0 <= e.x < self.winfo_width() and 0 <= e.y < self.winfo_height():
+            self._click()
+
+    def _click(self):
+        if self.enabled and self.command:
+            self.command()
+
+    def set(self, text=None, enabled=None, kind=None, command=False):
+        if text is not None:
+            self.configure(text=text)
+        if enabled is not None:
+            self.enabled = enabled
+        if kind is not None:
+            self.kind = kind
+        if command is not False:
+            self.command = command
+        self._paint()
+
+
+class CheckRow(tk.Frame):
+    def __init__(self, parent, text, on_change=None, nivel=0, bg=C.SURFACE):
+        super().__init__(parent, bg=bg, cursor="hand2")
+        self.valor, self.on_change, self.nivel, self.bg = False, on_change, nivel, bg
+        self.box = tk.Canvas(self, width=18, height=18, bg=bg, highlightthickness=0)
+        self.box.pack(side="left", padx=(16 + nivel * 28, 12), pady=8)
+        self.lbl = tk.Label(self, text=text, font=fnt(10 if nivel == 0 else 9), bg=bg,
+                            anchor="w", justify="left", wraplength=560)
+        self.lbl.pack(side="left", fill="x", expand=True, pady=6)
+        for w in (self, self.box, self.lbl):
+            w.bind("<Button-1>", self.toggle)
+            w.bind("<Enter>", lambda e: self._bg(C.RAISED))
+            w.bind("<Leave>", lambda e: self._bg(self.bg))
+        self.set(False)
+
+    def _bg(self, cor):
+        for w in (self, self.box, self.lbl):
+            w.configure(bg=cor)
+
+    def toggle(self, e=None):
+        self.set(not self.valor)
+        if self.on_change:
+            self.on_change()
+
+    def set(self, v):
+        self.valor = v
+        b = self.box
+        b.delete("all")
+        if v:
+            b.create_rectangle(1, 1, 17, 17, fill=C.OK, outline=C.OK)
+            b.create_line(5, 9, 8, 12, 13, 5, fill=C.INK, width=2.4, capstyle="round", joinstyle="round")
+        else:
+            b.create_rectangle(1, 1, 17, 17, fill=C.INK, outline=C.MUTED)
+        base = C.TEXT if self.nivel == 0 else C.TEXT2
+        self.lbl.configure(fg=C.MUTED if v else base)
+
+
+class Segmented(tk.Frame):
+    def __init__(self, parent, opcoes, valor, command=None, cores=None):
+        super().__init__(parent, bg=C.INK, highlightthickness=1, highlightbackground=C.LINE)
+        self.valor, self.command, self.cores, self.items = valor, command, cores or {}, {}
+        for rot, val in opcoes:
+            lb = tk.Label(self, text=rot, font=fnt(9, "bold"), padx=14, pady=5, cursor="hand2")
+            lb.pack(side="left", padx=2, pady=2)
+            lb.bind("<Button-1>", lambda e, v=val: self.set(v, True))
+            self.items[val] = lb
+        self._paint()
+
+    def set(self, v, notify=False):
+        self.valor = v
+        self._paint()
+        if notify and self.command:
+            self.command(v)
+
+    def _paint(self):
+        for v, lb in self.items.items():
+            if v == self.valor:
+                lb.configure(bg=self.cores.get(v, C.ACCENT), fg=C.INK)
+            else:
+                lb.configure(bg=C.INK, fg=C.TEXT2)
+
+
+class Campo(tk.Frame):
+    def __init__(self, parent, placeholder="", on_change=None, width=20):
+        super().__init__(parent, bg=C.INK, highlightthickness=1, highlightbackground=C.LINE)
+        self.ph, self.on_change, self._ph_on = placeholder, on_change, False
+        self.e = tk.Entry(self, font=fnt(10), bg=C.INK, fg=C.TEXT, insertbackground=C.TEXT,
+                          relief="flat", bd=0, highlightthickness=0, width=width)
+        self.e.pack(fill="x", padx=10, pady=6)
+        self.e.bind("<FocusIn>", self._in)
+        self.e.bind("<FocusOut>", self._out)
+        self.e.bind("<KeyRelease>", lambda e: self.on_change and self.on_change())
+        self._out()
+
+    def _in(self, e=None):
+        self.configure(highlightbackground=C.ACCENT)
+        if self._ph_on:
+            self.e.delete(0, "end")
+            self.e.configure(fg=C.TEXT)
+            self._ph_on = False
+
+    def _out(self, e=None):
+        self.configure(highlightbackground=C.LINE)
+        if not self.e.get() and self.ph:
+            self.e.insert(0, self.ph)
+            self.e.configure(fg=C.MUTED)
+            self._ph_on = True
+
+    def valor(self):
+        return "" if self._ph_on else self.e.get().strip()
+
+
+class Barra(tk.Canvas):
+    def __init__(self, parent, altura=6, cor=C.OK):
+        super().__init__(parent, height=altura, bg=parent.cget("bg"), highlightthickness=0)
+        self.frac, self.cor = 0.0, cor
+        self.bind("<Configure>", lambda e: self._draw())
+
+    def set(self, frac, cor=None):
+        self.frac = max(0.0, min(1.0, frac))
+        if cor:
+            self.cor = cor
+        self._draw()
+
+    def _draw(self):
+        self.delete("all")
+        w, h = self.winfo_width(), int(self.cget("height"))
+        self.create_rectangle(0, 0, w, h, fill=C.RAISED, width=0)
+        if self.frac > 0:
+            self.create_rectangle(0, 0, w * self.frac, h, fill=self.cor, width=0)
+
+
+class Trilho(tk.Canvas):
+    def __init__(self, parent, ini=240, fim=1440):
+        super().__init__(parent, height=62, bg=parent.cget("bg"), highlightthickness=0)
+        self.ini, self.fim = ini, fim
+        self.janela, self.eventos, self.cor = None, [], C.ACCENT
+        self.bind("<Configure>", lambda e: self.draw())
+
+    def set(self, janela, eventos, cor):
+        self.janela, self.eventos, self.cor = janela, eventos, cor
+        self.draw()
+
+    def draw(self):
+        self.delete("all")
+        w = self.winfo_width()
+        if w < 80:
+            return
+        now = datetime.now()
+        m = now.hour * 60 + now.minute + now.second / 60
+        pad, total = 14, self.fim - self.ini
+        usable = w - 2 * pad
+        n = total // 30
+        slot = usable / n
+        y0, y1 = 22, 38
+
+        def x(minuto):
+            return pad + (minuto - self.ini) / total * usable
+
+        for i in range(n):
+            a = self.ini + i * 30
+            b = a + 30
+            dentro = self.janela is None or self.janela[0] <= a < self.janela[1]
+            if not dentro:
+                cor = C.RAIL_OFF
+            elif b <= m:
+                cor = C.RAIL_PAST
+            else:
+                cor = C.RAIL_NEXT
+            x0, x1 = pad + i * slot + 1, pad + (i + 1) * slot - 1
+            self.create_rectangle(x0, y0, x1, y1, fill=cor, width=0)
+            if a <= m < b:
+                self.create_rectangle(x0, y0, x0 + (x1 - x0) * (m - a) / 30, y1, fill=self.cor, width=0)
+        for hh in range(self.ini // 60, self.fim // 60 + 1, 2):
+            self.create_text(x(hh * 60), 52, text=f"{hh % 24:02d}h", fill=C.MUTED, font=fnt(8, num=True))
+        for dt, c in self.eventos:
+            mm = dt.hour * 60 + dt.minute + 15 - (dt.minute % 30)
+            if self.ini <= mm <= self.fim:
+                xx = x(mm)
+                self.create_oval(xx - 3, 9, xx + 3, 15, fill=c, outline="")
+        if self.ini <= m <= self.fim:
+            xx = x(m)
+            self.create_line(xx, y0 - 5, xx, y1 + 5, fill=C.TEXT, width=2)
+
+
+class Toaster:
+    def __init__(self, root):
+        self.root, self.ativos, self.off = root, [], {}
+
+    def show(self, titulo, detalhe="", tom="ok"):
+        cor = TOM[tom]
+        t = tk.Frame(self.root, bg=C.RAISED, highlightthickness=1, highlightbackground=C.LINE)
+        tk.Frame(t, bg=cor, width=4).pack(side="left", fill="y")
+        body = tk.Frame(t, bg=C.RAISED, padx=16, pady=11)
+        body.pack(side="left")
+        tk.Label(body, text=titulo, font=fnt(10, "bold"), bg=C.RAISED, fg=C.TEXT, anchor="w").pack(anchor="w")
+        if detalhe:
+            tk.Label(body, text=detalhe, font=fnt(9), bg=C.RAISED, fg=C.TEXT2, anchor="w",
+                     justify="left", wraplength=340).pack(anchor="w", pady=(2, 0))
+        for w in (t, body, *body.winfo_children()):
+            w.bind("<Button-1>", lambda e: self._fechar(t))
+        self.ativos.append(t)
+        self.off[t] = 380
+        self._layout()
+        self._slide(t)
+        self.root.after(4000 if tom == "ok" else 7000, lambda: self._fechar(t))
+
+    def _slide(self, t):
+        if t not in self.ativos:
+            return
+        self.off[t] = int(self.off[t] * 0.62)
+        self._layout()
+        if self.off[t] > 1:
+            self.root.after(16, lambda: self._slide(t))
+
+    def _layout(self):
+        y = -22
+        for t in reversed(self.ativos):
+            t.place(relx=1, rely=1, x=-22 + self.off.get(t, 0), y=y, anchor="se")
+            t.lift()
+            t.update_idletasks()
+            y -= t.winfo_reqheight() + 8
+
+    def _fechar(self, t):
+        if t in self.ativos:
+            self.ativos.remove(t)
+            self.off.pop(t, None)
+            t.destroy()
+            self._layout()
+
+
+# ============================================================
+# COLAR BASE EM PLANILHA (BlueLink e futuros)
+# Lê o arquivo de origem da linha_inicio até o fim,
+# limpa a sheet de destino e cola a partir da célula indicada.
+# ============================================================
+
+def colar_na_planilha(caminho_origem, caminho_planilha, sheet_nome, celula="A1", linha_inicio=2):
+    """
+    Lê dados do arquivo de origem (csv/xlsx/tsv/xlsm) a partir de linha_inicio,
+    abre a planilha destino (.xlsm/.xlsx), limpa a sheet e cola os dados.
+    Retorna (True, msg) ou (False, msg).
+    """
+
+    ext_orig = os.path.splitext(caminho_origem)[1].lower()
+    ext_plan = os.path.splitext(caminho_planilha)[1].lower()
+
+    # ── Ler origem ──────────────────────────────────────────
+    dados = []
+    try:
+        if ext_orig in (".xlsx", ".xlsm"):
+            try:
+                from openpyxl import load_workbook
+            except ImportError:
+                return False, "Biblioteca openpyxl não instalada. Execute: pip install openpyxl"
+            wb_src = load_workbook(caminho_origem, read_only=True, data_only=True)
+            ws_src = wb_src.active
+            for i, row in enumerate(ws_src.iter_rows(values_only=True), start=1):
+                if i >= linha_inicio:
+                    dados.append(list(row))
+            wb_src.close()
+        elif ext_orig in (".csv", ".tsv", ".txt"):
+            delim = "\t" if ext_orig == ".tsv" else None
+            with open(caminho_origem, "r", encoding="utf-8-sig", errors="replace") as f:
+                if delim:
+                    reader = csv.reader(f, delimiter=delim)
+                else:
+                    sniffer = csv.Sniffer()
+                    amostra = f.read(8192)
+                    f.seek(0)
+                    try:
+                        dialect = sniffer.sniff(amostra)
+                        reader = csv.reader(f, dialect)
+                    except csv.Error:
+                        reader = csv.reader(f, delimiter=",")
+                for i, row in enumerate(reader, start=1):
+                    if i >= linha_inicio:
+                        dados.append(row)
+        else:
+            return False, f"Formato de origem não suportado: {ext_orig}"
+    except Exception as e:
+        return False, f"Erro ao ler origem: {e}"
+
+    if not dados:
+        return False, "Nenhum dado encontrado a partir da linha indicada."
+
+    # ── Colar no destino ────────────────────────────────────
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        return False, "Biblioteca openpyxl não instalada. Execute: pip install openpyxl"
+
+    try:
+        keep_vba = ext_plan == ".xlsm"
+        wb_dst = load_workbook(caminho_planilha, keep_vba=keep_vba)
+    except Exception as e:
+        return False, f"Erro ao abrir planilha destino: {e}"
+
+    if sheet_nome not in wb_dst.sheetnames:
+        abas = ", ".join(wb_dst.sheetnames)
+        wb_dst.close()
+        return False, f"Aba '{sheet_nome}' não encontrada. Abas disponíveis: {abas}"
+
+    ws_dst = wb_dst[sheet_nome]
+
+    # Descobrir célula inicial
+    from openpyxl.utils import coordinate_to_tuple
+    try:
+        row_ini, col_ini = coordinate_to_tuple(celula)
+    except Exception:
+        row_ini, col_ini = 1, 1
+
+    # Limpar área existente na sheet
+    if ws_dst.max_row and ws_dst.max_column:
+        for row in ws_dst.iter_rows(min_row=row_ini, max_row=ws_dst.max_row,
+                                     min_col=col_ini, max_col=ws_dst.max_column):
+            for cell in row:
+                cell.value = None
+
+    # Colar dados
+    max_cols = 0
+    for r_idx, row_data in enumerate(dados):
+        if len(row_data) > max_cols:
+            max_cols = len(row_data)
+        for c_idx, valor in enumerate(row_data):
+            ws_dst.cell(row=row_ini + r_idx, column=col_ini + c_idx, value=valor)
+
+    try:
+        wb_dst.save(caminho_planilha)
+    except PermissionError:
+        wb_dst.close()
+        return False, "Planilha aberta no Excel. Feche-a e tente novamente."
+    except Exception as e:
+        wb_dst.close()
+        return False, f"Erro ao salvar: {e}"
+
+    wb_dst.close()
+    return True, f"{len(dados)} linhas × {max_cols} colunas coladas em '{sheet_nome}!{celula}'"
+
+
+# ============================================================
+# CONVERSÃO TEXTO → HTML PARA E-MAIL
+# ============================================================
+
+def _texto_para_html(texto):
+    """Converte texto simples em HTML para corpo do e-mail Outlook."""
+    html = texto.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    html = html.replace("\n\n", "</p><p>").replace("\n", "<br>")
+    return (
+        '<div style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #333;">'
+        f'<p>{html}</p>'
+        '</div>'
+    )
+
+
+# ============================================================
+# ENVIO DE E-MAIL VIA OUTLOOK (win32com)
+# ============================================================
+
+def preparar_outlook(assunto, corpo_html, responder_a=None):
+    """
+    Abre o e-mail no Outlook para revisão manual (Display, não Send).
+    Se responder_a for informado, busca o e-mail mais recente com esse assunto
+    e faz ReplyAll. Senão cria novo.
+    Retorna (True, msg) ou (False, msg).
+    """
+    if not OUTLOOK_OK:
+        return False, "win32com não instalado. Execute: pip install pywin32"
+    try:
+        outlook = win32com.client.Dispatch("Outlook.Application")
+        mail = None
+
+        if responder_a:
+            ns = outlook.GetNamespace("MAPI")
+            inbox = ns.GetDefaultFolder(6)
+            items = inbox.Items
+            items.Sort("[ReceivedTime]", True)
+            for item in items:
+                try:
+                    if responder_a.lower() in item.Subject.lower():
+                        mail = item.ReplyAll
+                        mail.HTMLBody = corpo_html + "<br><br>" + mail.HTMLBody
+                        break
+                except Exception:
+                    continue
+
+        if mail is None:
+            mail = outlook.CreateItem(0)
+            mail.Subject = assunto
+            mail.HTMLBody = corpo_html
+
+        mail.Display()
+        return True, "E-mail aberto no Outlook para revisão."
+    except Exception as e:
+        return False, f"Erro ao abrir Outlook: {e}"
+
+
+def enviar_outlook(assunto, corpo_html, responder_a=None):
+    """
+    Envia o e-mail automaticamente via Outlook (Send).
+    Mesma lógica de busca do preparar_outlook, mas faz Send.
+    Retorna (True, msg) ou (False, msg).
+    """
+    if not OUTLOOK_OK:
+        return False, "win32com não instalado. Execute: pip install pywin32"
+    try:
+        outlook = win32com.client.Dispatch("Outlook.Application")
+        mail = None
+
+        if responder_a:
+            ns = outlook.GetNamespace("MAPI")
+            inbox = ns.GetDefaultFolder(6)
+            items = inbox.Items
+            items.Sort("[ReceivedTime]", True)
+            for item in items:
+                try:
+                    if responder_a.lower() in item.Subject.lower():
+                        mail = item.ReplyAll
+                        mail.HTMLBody = corpo_html + "<br><br>" + mail.HTMLBody
+                        break
+                except Exception:
+                    continue
+
+        if mail is None:
+            mail = outlook.CreateItem(0)
+            mail.Subject = assunto
+            mail.HTMLBody = corpo_html
+
+        mail.Send()
+        return True, "E-mail enviado com sucesso pelo Outlook."
+    except Exception as e:
+        return False, f"Erro ao enviar: {e}"
+
+# ============================================================
+# LER RESUMO DA PLANILHA CARDIF E MONTAR HTML
+# Lê aba RESUMO do WhatsApp Cardif.xlsx, extrai as duas tabelas
+# (WhatsApp e WhatsApp After Sales) até o intervalo anterior,
+# e retorna HTML formatado para colar no e-mail.
+# ============================================================
+
+def ler_resumo_cardif(caminho_planilha, sheet_nome="RESUMO", passo_min=30):
+    """
+    Lê a aba RESUMO do WhatsApp Cardif.xlsx.
+    Extrai duas tabelas: WhatsApp (colunas I-L) e WhatsApp After Sales (colunas N-Q).
+    Filtra até o intervalo anterior (30 em 30).
+    Retorna (True, html_str) ou (False, msg_erro).
+    """
+    if not os.path.exists(caminho_planilha):
+        return False, f"Planilha não encontrada: {caminho_planilha}"
+
+    try:
+        wb = load_workbook(caminho_planilha, read_only=True, data_only=True)
+    except Exception as e:
+        return False, f"Erro ao abrir planilha: {e}"
+
+    if sheet_nome not in wb.sheetnames:
+        wb.close()
+        return False, f"Aba '{sheet_nome}' não encontrada."
+
+    ws = wb[sheet_nome]
+
+    # Calcular intervalo anterior
+    now = datetime.now()
+    ini_atual = now.replace(minute=now.minute - now.minute % passo_min, second=0, microsecond=0)
+    intervalo_limite = ini_atual  # Até aqui (não inclui o atual)
+
+    def parse_hora_celula(val):
+        """Converte valor de célula (time/str) para objeto time."""
+        if val is None:
+            return None
+        if hasattr(val, 'hour'):
+            return val
+        s = str(val).strip()
+        if ":" in s:
+            parts = s.split(":")
+            try:
+                from datetime import time
+                return time(int(parts[0]), int(parts[1]))
+            except (ValueError, IndexError):
+                return None
+        return None
+
+    def hora_antes_limite(val):
+        """Retorna True se o horário da célula é antes do intervalo limite."""
+        t = parse_hora_celula(val)
+        if t is None:
+            return False
+        from datetime import time
+        limite = time(intervalo_limite.hour, intervalo_limite.minute)
+        return t <= limite
+
+    def ler_tabela(col_inicio, col_fim, linha_header, linha_dados_inicio):
+        """Lê uma tabela da planilha entre colunas e linhas específicas."""
+        headers = []
+        for c in range(col_inicio, col_fim + 1):
+            val = ws.cell(row=linha_header, column=c).value
+            headers.append(str(val) if val else "")
+
+        rows = []
+        for r in range(linha_dados_inicio, ws.max_row + 1):
+            hora_val = ws.cell(row=r, column=col_inicio).value
+            if hora_val is None:
+                break
+            if not hora_antes_limite(hora_val):
+                break
+            row = []
+            for c in range(col_inicio, col_fim + 1):
+                val = ws.cell(row=r, column=c).value
+                if val is None:
+                    row.append("")
+                elif hasattr(val, 'strftime'):
+                    row.append(val.strftime("%H:%M"))
+                else:
+                    row.append(str(val))
+            rows.append(row)
+
+        return headers, rows
+
+    # Tabela WhatsApp: colunas J-L (10-12), header linha 1, dados linha 2
+    # Baseado na imagem: J=Intervalo, K=Logados, L=Deslogues
+    headers_wa, rows_wa = ler_tabela(10, 12, 1, 2)
+
+    # Tabela WhatsApp After Sales: colunas O-Q (15-17), header linha 1, dados linha 2
+    headers_as, rows_as = ler_tabela(15, 17, 1, 2)
+
+    wb.close()
+
+    if not rows_wa and not rows_as:
+        return False, f"Nenhum dado encontrado até {intervalo_limite:%H:%M}."
+
+    # Montar HTML
+    def tabela_html(titulo, headers, rows):
+        if not rows:
+            return ""
+        html = f'<p><b><i>{titulo}:</i></b></p>\n'
+        html += '<table border="1" cellpadding="4" cellspacing="0" '
+        html += 'style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:10pt;">\n'
+        html += '<tr style="background-color:#4472C4;color:white;font-weight:bold;">'
+        for h in headers:
+            html += f'<td style="padding:4px 8px;">{h}</td>'
+        html += '</tr>\n'
+        for i, row in enumerate(rows):
+            bg = "#D9E2F3" if i % 2 == 0 else "#FFFFFF"
+            html += f'<tr style="background-color:{bg};">'
+            for val in row:
+                html += f'<td style="padding:4px 8px;">{val}</td>'
+            html += '</tr>\n'
+        html += '</table>\n'
+        return html
+
+    corpo = '<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#333;">\n'
+    corpo += tabela_html("WhatsApp", headers_wa, rows_wa)
+    corpo += '<br>\n'
+    corpo += tabela_html("WhatsApp After Sales", headers_as, rows_as)
+    corpo += '</div>'
+
+    total_rows = len(rows_wa) + len(rows_as)
+    return True, corpo
+
+# ============================================================
+# COLAR CLIPBOARD NA PLANILHA (Cardif — Parcial de Logados)
+# Lê texto tab-separated do clipboard do Windows,
+# valida número de colunas, limpa a sheet e cola.
+# ============================================================
+
+def ler_clipboard_tsv(root, max_colunas=None):
+    """
+    Lê o conteúdo do clipboard como texto tab-separated.
+    Retorna (True, dados_lista) ou (False, msg_erro).
+    dados_lista = lista de listas (cada linha = lista de valores).
+    """
+    try:
+        texto = root.clipboard_get()
+    except tk.TclError:
+        return False, "Clipboard vazio. Exporte os dados do CMS primeiro."
+
+    if not texto or not texto.strip():
+        return False, "Clipboard vazio. Exporte os dados do CMS primeiro."
+
+    linhas = texto.strip().split("\n")
+    dados = []
+    for i, linha in enumerate(linhas):
+        # CMS exporta com tab como separador
+        colunas = linha.split("\t")
+
+        # Validar número de colunas
+        if max_colunas and len(colunas) > max_colunas:
+            return False, (
+                f"Linha {i + 1} tem {len(colunas)} colunas, "
+                f"mas o máximo permitido é {max_colunas}.\n\n"
+                f"Verifique as configurações de exportação do CMS:\n"
+                f"  • Separador: (guia)\n"
+                f"  • Delimitador: (nenhum)\n"
+                f"  • ☐ Legendas e Cabeçalhos: DESMARCADO\n\n"
+                f"Conteúdo da linha:\n{linha[:200]}"
+            )
+
+        # Limpar valores vazios no final
+        while colunas and colunas[-1].strip() == "":
+            colunas.pop()
+
+        if colunas:
+            dados.append(colunas)
+
+    if not dados:
+        return False, "Clipboard não contém dados válidos."
+
+    return True, dados
+
+
+def colar_clipboard_na_planilha(root, caminho_planilha, sheet_nome,
+                                 celula="A2", max_colunas=6):
+    """
+    Lê clipboard (tab-separated), valida colunas, limpa a sheet e cola.
+    Retorna (True, msg) ou (False, msg).
+    """
+    # 1. Ler clipboard
+    ok, resultado = ler_clipboard_tsv(root, max_colunas)
+    if not ok:
+        return False, resultado
+
+    dados = resultado
+
+    # 2. Validar que parece dados do CMS
+    if len(dados) < 2:
+        return False, (
+            f"Apenas {len(dados)} linha(s) no clipboard. "
+            f"Verifique se exportou corretamente do CMS."
+        )
+
+    # 3. Abrir planilha
+    ext_plan = os.path.splitext(caminho_planilha)[1].lower()
+    try:
+        keep_vba = ext_plan == ".xlsm"
+        wb = load_workbook(caminho_planilha, keep_vba=keep_vba)
+    except Exception as e:
+        return False, f"Erro ao abrir planilha: {e}"
+
+    if sheet_nome not in wb.sheetnames:
+        abas = ", ".join(wb.sheetnames)
+        wb.close()
+        return False, f"Aba '{sheet_nome}' não encontrada. Abas: {abas}"
+
+    ws = wb[sheet_nome]
+
+    # 4. Descobrir célula inicial
+    try:
+        row_ini, col_ini = coordinate_to_tuple(celula)
+    except Exception:
+        row_ini, col_ini = 2, 1
+
+    # 5. Limpar dados antigos (preservar cabeçalho na linha 1)
+    if ws.max_row and ws.max_row >= row_ini:
+        for row in ws.iter_rows(min_row=row_ini, max_row=ws.max_row,
+                                 min_col=col_ini,
+                                 max_col=max(ws.max_column, col_ini + max_colunas)):
+            for cell in row:
+                cell.value = None
+
+    # 6. Colar dados
+    max_cols_real = 0
+    for r_idx, row_data in enumerate(dados):
+        if len(row_data) > max_cols_real:
+            max_cols_real = len(row_data)
+        for c_idx, valor in enumerate(row_data):
+            # Tentar converter números
+            val_limpo = valor.strip()
+            if val_limpo:
+                try:
+                    val_limpo = int(val_limpo)
+                except ValueError:
+                    try:
+                        val_limpo = float(val_limpo.replace(",", "."))
+                    except ValueError:
+                        pass
+            else:
+                val_limpo = None
+            ws.cell(row=row_ini + r_idx, column=col_ini + c_idx, value=val_limpo)
+
+    # 7. Salvar
+    try:
+        wb.save(caminho_planilha)
+    except PermissionError:
+        wb.close()
+        return False, "Planilha aberta no Excel. Feche-a e tente novamente."
+    except Exception as e:
+        wb.close()
+        return False, f"Erro ao salvar: {e}"
+
+    wb.close()
+    return True, (
+        f"{len(dados)} linhas × {max_cols_real} colunas coladas em "
+        f"'{sheet_nome}!{celula}'"
+    )
+
+class Rolagem(tk.Frame):
+    def __init__(self, parent, bg=C.INK, estilo="WFM.Vertical.TScrollbar"):
+        super().__init__(parent, bg=bg)
+        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0)
+        self.sb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview,
+                                style=estilo)
+        self.inner = tk.Frame(self.canvas, bg=bg)
+        self.win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(self.win, width=e.width))
+        self.canvas.configure(yscrollcommand=self.sb.set)
+        self.sb.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+
+    def rolar(self, passos):
+        if self.canvas.yview() != (0.0, 1.0):
+            self.canvas.yview_scroll(passos, "units")
+
+    def limpar(self):
+        for w in self.inner.winfo_children():
+            w.destroy()
+        self.canvas.yview_moveto(0)
+
+
+# ── Célula 13 (markdown) ────────────────────────────────────────────────
+# #### ============================================================
+# #### CÉLULA 2A.1 — TEMA, UTILITÁRIOS E COMPONENTES
+# #### ============================================================
+
+# ── Célula 14 (código) ──────────────────────────────────────────────────
+
+# ============================================================
+# LEITURA AUTOMÁTICA DO PONTUAL (Voz/Chat) VIA OUTLOOK
+# Lê o e-mail mais recente pelo assunto, extrai a tabela de SLA
+# por canal e decide abaixo/acima de 80%.
+# ============================================================
+
+def _pct_para_float(valor):
+    if valor is None:
+        return None
+    s = str(valor).strip().replace("%", "").replace(",", ".")
+    if not s or s.lower() in ("-", "nan", "none"):
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _fmt_pct(x):
+    if x is None:
+        return ""
+    if float(x) == int(x):
+        return str(int(x))
+    return f"{float(x):.1f}".replace(".", ",")
+
+
+def preencher_campo(cp, valor):
+    cp._ph_on = False
+    cp.e.delete(0, "end")
+    cp.e.insert(0, str(valor))
+    cp.e.configure(fg=C.TEXT)
+
+
+def ler_corpo_email_outlook(assunto, remetente=None):
+    if not OUTLOOK_OK:
+        return False, "win32com não instalado. Execute: pip install pywin32"
+    try:
+        outlook = win32com.client.Dispatch("Outlook.Application")
+        ns = outlook.GetNamespace("MAPI")
+        inbox = ns.GetDefaultFolder(6)
+        items = inbox.Items
+        items.Sort("[ReceivedTime]", True)
+        for item in items:
+            try:
+                if assunto.lower() not in (item.Subject or "").lower():
+                    continue
+                if remetente and remetente.lower() not in (item.SenderName or "").lower():
+                    continue
+                return True, {"assunto": item.Subject, "html": item.HTMLBody,
+                              "recebido": item.ReceivedTime}
+            except Exception:
+                continue
+        return False, f"Nenhum e-mail encontrado com o assunto '{assunto}'."
+    except Exception as e:
+        return False, f"Erro ao acessar Outlook: {e}"
+
+
+def extrair_sla_pontual(html, tipo):
+    try:
+        import pandas as pd
+        from io import StringIO
+    except ImportError:
+        return False, "pandas não instalado. Execute: pip install pandas lxml"
+    try:
+        tabelas = pd.read_html(StringIO(html))
+    except Exception as e:
+        return False, f"Não li as tabelas do e-mail: {e}"
+
+    def norm(s):
+        return " ".join(str(s).split()).strip().lower()
+
+    def matriz(df):
+        linhas = [[str(c) for c in df.columns.tolist()]]
+        for _, row in df.iterrows():
+            linhas.append(["" if pd.isna(v) else str(v) for v in row.tolist()])
+        return linhas
+
+    canais = {}
+    for df in tabelas:
+        m = matriz(df)
+        h = next((i for i, lin in enumerate(m) if any(norm(c) == "canal" for c in lin)), None)
+        if h is None:
+            continue
+        header = m[h]
+        col_canal = next((j for j, c in enumerate(header) if norm(c) == "canal"), None)
+        col_sla = next((j for j, c in enumerate(header) if norm(c) == "sla"), None)
+        col_vol = next((j for j, c in enumerate(header)
+                        if norm(c) in ("% desvio forecast", "%desvio forecast", "desvio forecast")), None)
+        if col_canal is None or col_sla is None:
+            continue
+        for lin in m[h + 1:]:
+            if col_canal >= len(lin):
+                continue
+            nome = norm(lin[col_canal])
+            if not nome or nome == "nan":
+                continue
+            if "sac" in nome:
+                chave = "SAC & Sinistro"
+            elif "portal" in nome:
+                chave = "Portal Segurado"
+            elif "total" in nome:
+                chave = "Total"
+            else:
+                chave = lin[col_canal].strip()
+            canais[chave] = {
+                "sla": _pct_para_float(lin[col_sla]) if col_sla < len(lin) else None,
+                "desvio_vol": _pct_para_float(lin[col_vol]) if col_vol is not None and col_vol < len(lin) else None,
+            }
+        break
+
+    if not canais:
+        return False, "Não encontrei a tabela de SLA por canal no e-mail."
+
+    if tipo == "justificativa_chat":
+        ref = canais.get("SAC & Sinistro") or canais.get("Total")
+    else:
+        ref = canais.get("Total") or next(iter(canais.values()))
+
+    sla = ref.get("sla") if ref else None
+    desvio_vol = ref.get("desvio_vol") if ref else None
+    abaixo = (sla < 80.0) if sla is not None else None
+
+    partes = [f"{nome}: SLA {_fmt_pct(canais[nome]['sla'])}%"
+              for nome in ("SAC & Sinistro", "Portal Segurado", "Total")
+              if nome in canais and canais[nome].get("sla") is not None]
+    resumo = " · ".join(partes) if partes else "SLA lido do e-mail."
+    if abaixo is True:
+        resumo += " — abaixo de 80%, justificar."
+    elif abaixo is False:
+        resumo += " — no alvo."
+    curto = (f"SLA {_fmt_pct(sla)}%" if sla is not None else "SLA lido") + \
+            (" (abaixo de 80%)" if abaixo else "")
+
+    return True, {"canais": canais, "sla": sla, "desvio_vol": desvio_vol,
+                  "abaixo": abaixo, "resumo": resumo, "resumo_curto": curto}
+
+
+# ── Célula 15 (markdown) ────────────────────────────────────────────────
+# #### ============================================================
+# #### CÉLULA 2B — APP, PAINEL DO DIA E HISTÓRICO
+# #### ============================================================
+
+# ── Célula 16 (código) ──────────────────────────────────────────────────
+
+class WFMApp:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("Central do RTA")
+        self.root.configure(bg=C.INK)
+        self.root.minsize(1000, 620)
+        init_fonts(self.root)
+        estilo = ttk.Style(self.root)
+        estilo.theme_use("clam")
+        estilo.configure("WFM.Vertical.TScrollbar", background=C.RAISED, troughcolor=C.INK,
+                         bordercolor=C.INK, lightcolor=C.RAISED, darkcolor=C.RAISED,
+                         arrowcolor=C.MUTED, gripcount=0)
+        estilo.map("WFM.Vertical.TScrollbar", background=[("active", C.HOVER)])
+        estilo.configure("WFM.Side.Vertical.TScrollbar", background=C.RAISED,
+                         troughcolor=C.SIDEBAR, bordercolor=C.SIDEBAR,
+                         lightcolor=C.RAISED, darkcolor=C.RAISED,
+                         arrowcolor=C.MUTED, gripcount=0)
+        estilo.map("WFM.Side.Vertical.TScrollbar", background=[("active", C.HOVER)])
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        w, h = min(1220, sw - 40), min(800, sh - 80)
+        x, y = max(0, (sw - w) // 2), max(0, (sh - h) // 2 - 20)
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
+
+        self.ativo, self.nome_op, self._ult_int = "home", None, None
+        self.toast = Toaster(self.root)
+        self._montar_sidebar()
+        self._montar_topo()
+        self.body = Rolagem(self.main)
+        self.body.pack(fill="both", expand=True, pady=(8, 0))
+
+        self.root.bind_all("<MouseWheel>", self._wheel)
+        self.root.bind_all("<Button-4>", lambda e: self._wheel(e, -1))
+        self.root.bind_all("<Button-5>", lambda e: self._wheel(e, 1))
+        self._tick()
+        self.show_home()
+
+    def run(self):
+        self.root.mainloop()
+
+    def _sair(self):
+        if messagebox.askyesno("Sair", "Deseja realmente fechar a Central do RTA?",
+                               icon="question", parent=self.root):
+            self.root.destroy()
+
+    def _wheel(self, e, passos=None):
+        if isinstance(e.widget, tk.Text):
+            return
+        if passos is None:
+            passos = -max(1, abs(e.delta) // 120) if e.delta > 0 else max(1, abs(e.delta) // 120)
+
+        # Descobre o widget sob o cursor e verifica se está dentro da sidebar
+        alvo = self.root.winfo_containing(e.x_root, e.y_root)
+        w = alvo
+        while w is not None:
+            if w is self.side:
+                self.side_scroll.rolar(passos)
+                return
+            w = w.master
+        self.body.rolar(passos)
+
+    def _montar_sidebar(self):
+        self.side = tk.Frame(self.root, bg=C.SIDEBAR, width=240)
+        self.side.pack(side="left", fill="y")
+        self.side.pack_propagate(False)
+        marca = tk.Frame(self.side, bg=C.SIDEBAR, padx=-10, pady=-10)
+        marca.pack(fill="x")
+        tk.Label(marca, text="WFM Real Time", font=fnt(16, "bold", num=True),
+                 bg=C.SIDEBAR, fg=C.TEXT, anchor="w").pack(fill="x")
+        tk.Label(marca, text="Central do RTA", font=fnt(9), bg=C.SIDEBAR, fg=C.MUTED,
+                 anchor="w").pack(fill="x")
+
+        # ── Botão Exit ──
+        exit_frame = tk.Frame(self.side, bg=C.SIDEBAR, padx=2, pady=0)
+        exit_frame.pack(side="bottom", fill="x", pady=(0, 8))
+        Btn(exit_frame, "✕  Sair", command=self._sair, kind="ghost", size=10, padx=14, pady=8).pack(fill="x")
+
+        rodape = tk.Frame(self.side, bg=C.SIDEBAR, padx=3, pady=3)
+        rodape.pack(side="bottom", fill="x")
+        ponto(rodape, C.OK, C.SIDEBAR).pack(side="left", anchor="n", pady=5)
+        tx = tk.Frame(rodape, bg=C.SIDEBAR)
+        tx.pack(side="left", padx=(10, 0))
+        tk.Label(tx, text="Modo seguro", font=fnt(9, "bold"), bg=C.SIDEBAR, fg=C.OK, anchor="w").pack(fill="x")
+        tk.Label(tx, text="Nada é movido sem a sua confirmação.", font=fnt(8), bg=C.SIDEBAR,
+                 fg=C.MUTED, anchor="w", justify="left", wraplength=170).pack(fill="x")
+
+        self.side_scroll = Rolagem(self.side, bg=C.SIDEBAR,
+                                   estilo="WFM.Side.Vertical.TScrollbar")
+        self.side_scroll.pack(fill="both", expand=True)
+        self.nav = self.side_scroll.inner
+
+    def _montar_topo(self):
+        self.main = tk.Frame(self.root, bg=C.INK)
+        self.main.pack(side="left", fill="both", expand=True)
+
+        topo = tk.Frame(self.main, bg=C.INK, padx=28, pady=20)
+        topo.pack(fill="x")
+        dir_ = tk.Frame(topo, bg=C.INK)
+        dir_.pack(side="right", anchor="n")
+        self.lbl_hora = tk.Label(dir_, font=fnt(24, "bold", num=True), bg=C.INK, fg=C.TEXT, anchor="e")
+        self.lbl_hora.pack(anchor="e")
+        self.lbl_data = tk.Label(dir_, font=fnt(9), bg=C.INK, fg=C.MUTED, anchor="e")
+        self.lbl_data.pack(anchor="e")
+        esq = tk.Frame(topo, bg=C.INK)
+        esq.pack(side="left", fill="x", expand=True)
+        self.lbl_volta = tk.Frame(esq, bg=C.INK)
+        self.lbl_volta.pack(anchor="w")
+        self.lbl_titulo = tk.Label(esq, font=fnt(21, "bold"), bg=C.INK, fg=C.TEXT, anchor="w")
+        self.lbl_titulo.pack(anchor="w")
+        self.lbl_sub = tk.Label(esq, font=fnt(10), bg=C.INK, fg=C.TEXT2, anchor="w")
+        self.lbl_sub.pack(anchor="w")
+
+        painel = tk.Frame(self.main, bg=C.SURFACE, padx=22, pady=14)
+        painel.pack(fill="x", padx=28)
+        info = tk.Frame(painel, bg=C.SURFACE, width=200, height=78)
+        info.pack(side="left", fill="y")
+        info.pack_propagate(False)
+        tk.Label(info, text="Intervalo atual", font=fnt(9), bg=C.SURFACE, fg=C.MUTED, anchor="w").pack(fill="x")
+        self.lbl_int = tk.Label(info, font=fnt(17, "bold", num=True), bg=C.SURFACE, fg=C.TEXT, anchor="w")
+        self.lbl_int.pack(fill="x")
+        self.lbl_cd = tk.Label(info, font=fnt(9), bg=C.SURFACE, fg=C.TEXT2, anchor="w")
+        self.lbl_cd.pack(fill="x")
+        tk.Frame(painel, bg=C.LINE, width=1).pack(side="left", fill="y", padx=(0, 6))
+        rail = tk.Frame(painel, bg=C.SURFACE)
+        rail.pack(side="left", fill="both", expand=True)
+        self.trilho = Trilho(rail)
+        self.trilho.pack(fill="x")
+        self.lbl_janela = tk.Label(rail, font=fnt(8), bg=C.SURFACE, fg=C.MUTED, anchor="w")
+        self.lbl_janela.pack(fill="x", padx=14)
+
+    def _tick(self):
+        now = datetime.now()
+        self.lbl_hora.configure(text=now.strftime("%H:%M:%S"))
+        self.lbl_data.configure(text=f"{DIAS_PT[now.weekday()]}, {now.day} de {MESES_PT[now.month].lower()}")
+        ini, fim = intervalo(now)
+        rest = int((fim - now).total_seconds())
+        self.lbl_int.configure(text=f"{ini:%H:%M} – {fim:%H:%M}")
+        self.lbl_cd.configure(text=f"Fecha em {rest // 60:02d}:{rest % 60:02d}",
+                              fg=C.WARN if rest < 300 else C.TEXT2)
+        if now.second % 15 == 0 or ini != self._ult_int:
+            self._ult_int = ini
+            self.trilho.draw()
+        self.root.after(1000 - now.microsecond // 1000, self._tick)
+
+    def _pagina(self, titulo, sub, ativo, nome_op=None, voltar=None):
+        self.ativo, self.nome_op = ativo, nome_op
+        self.lbl_titulo.configure(text=titulo)
+        self.lbl_sub.configure(text=sub)
+        for w in self.lbl_volta.winfo_children():
+            w.destroy()
+        if voltar:
+            Btn(self.lbl_volta, f"‹  {voltar[0]}", voltar[1], kind="quiet", size=9, padx=0, pady=2).pack(anchor="w")
+        self.body.limpar()
+        self.atualizar_contexto()
+        return self.body.inner
+
+    def atualizar_contexto(self):
+        self._nav()
+        d = OPERACOES.get(self.nome_op) if self.nome_op else None
+        eventos = [(dt, OPERACOES.get(r.get("operacao"), {}).get("cor", C.ACCENT))
+                   for dt, r in hist_periodo(1, self.nome_op)]
+        if d:
+            self.trilho.set(parse_horario(d.get("horario", "")), eventos, d["cor"])
+            st = "dentro do horário agora" if em_horario(d["horario"]) else "fora do horário agora"
+            self.lbl_janela.configure(text=f"{self.nome_op} atende das {d['horario'].replace('–', 'às')}, {st}. "
+                                           f"Os pontos marcam suas ações de hoje.")
+        else:
+            self.trilho.set(None, eventos, C.ACCENT)
+            self.lbl_janela.configure(text="Todas as operações. Os pontos marcam suas ações de hoje, na cor de cada operação.")
+
+    def _nav(self):
+        for w in self.nav.winfo_children():
+            w.destroy()
+        cont = {}
+        for _, r in hist_periodo(1):
+            cont[r.get("operacao")] = cont.get(r.get("operacao"), 0) + 1
+        self._nav_item("Painel do dia", "home", None, None, self.show_home)
+        tk.Label(self.nav, text="Operações", font=fnt(9), bg=C.SIDEBAR, fg=C.MUTED,
+                 anchor="w").pack(fill="x", padx=26, pady=(18, 6))
+        for nome, d in OPERACOES.items():
+            pronto = op_configurada(d)
+            extra = cont.get(nome, 0) if pronto else "em breve"
+            cmd = (lambda n=nome: self.show_operacao(n)) if pronto else None
+            self._nav_item(nome, f"op:{nome}", d["cor"], extra, cmd)
+        tk.Frame(self.nav, bg=C.LINE, height=1).pack(fill="x", padx=26, pady=14)
+        self._nav_item("Acesso rápido", "atalhos", None, None, self.show_atalhos)
+        self._nav_item("Histórico", "hist", None, None, self.show_historico)
+
+    def _nav_item(self, texto, chave, cor, extra, cmd):
+        ativo = self.ativo == chave
+        bg = C.SURFACE if ativo else C.SIDEBAR
+        row = tk.Frame(self.nav, bg=bg)
+        row.pack(fill="x", padx=12, pady=1)
+        tk.Frame(row, bg=(cor or C.ACCENT) if ativo else bg, width=3).pack(side="left", fill="y")
+        if cor:
+            ponto(row, cor if cmd else C.MUTED, bg).pack(side="left", padx=(12, 0))
+        tk.Label(row, text=texto, font=fnt(10, "bold" if ativo else "normal"), bg=bg,
+                 fg=C.TEXT if cmd else C.MUTED, anchor="w", pady=8,
+                 padx=10 if cor else 13).pack(side="left", fill="x", expand=True)
+        if isinstance(extra, int):
+            tk.Label(row, text=str(extra) if extra else "", font=fnt(9, "bold", num=True), bg=bg,
+                     fg=C.TEXT2, padx=12).pack(side="right")
+        elif extra:
+            tk.Label(row, text=extra, font=fnt(8), bg=bg, fg=C.MUTED, padx=12).pack(side="right")
+        if cmd and not ativo:
+            clicavel(row, cmd, C.SIDEBAR, C.SIDE_HOVER)
+        elif ativo and cmd:
+            clicavel(row, cmd, C.SURFACE, C.SURFACE)
+
+    def _feed(self, parent, itens, com_data=False, titulo_vazio="", texto_vazio=""):
+        if not itens:
+            vazio(parent, titulo_vazio, texto_vazio)
+            return
+        box = tk.Frame(parent, bg=C.INK)
+        box.pack(fill="x", padx=28)
+        for dt, r in itens:
+            row = tk.Frame(box, bg=C.SURFACE, padx=18, pady=9)
+            row.pack(fill="x", pady=(0, 2))
+            for col, ms in ((0, 120 if com_data else 86), (1, 130), (2, 96)):
+                row.grid_columnconfigure(col, minsize=ms)
+            row.grid_columnconfigure(3, weight=1)
+            tk.Label(row, text=dt.strftime("%d/%m  %H:%M" if com_data else "%H:%M:%S"),
+                     font=fnt(10, "bold", num=True), bg=C.SURFACE, fg=C.TEXT, anchor="w").grid(row=0, column=0, sticky="w")
+            op = tk.Frame(row, bg=C.SURFACE)
+            op.grid(row=0, column=1, sticky="w")
+            cor = OPERACOES.get(r.get("operacao"), {}).get("cor", C.MUTED)
+            ponto(op, cor, C.SURFACE).pack(side="left")
+            tk.Label(op, text=r.get("operacao", ""), font=fnt(9, "bold"), bg=C.SURFACE,
+                     fg=C.TEXT, padx=8).pack(side="left")
+            tk.Label(row, text="Alocação" if r.get("tipo") == "alocar" else "Verificação",
+                     font=fnt(9), bg=C.SURFACE, fg=C.MUTED, anchor="w").grid(row=0, column=2, sticky="w")
+            desc = r.get("descricao", "")
+            obs = r.get("observacoes", "")
+            if obs:
+                desc = f"{desc}   ({obs})"
+            tk.Label(row, text=desc if len(desc) < 80 else desc[:77] + "...", font=fnt(9),
+                     bg=C.SURFACE, fg=C.TEXT2, anchor="w").grid(row=0, column=3, sticky="w", padx=(0, 12))
+            pill(row, rotulo_status(r), TOM[hist_tom(r)]).grid(row=0, column=4, sticky="e")
+
+    def show_home(self):
+        B = self._pagina("Painel do dia", "Situação das operações e tudo o que você já fez hoje.", "home")
+        hoje = hist_periodo(1)
+        n_aloc = sum(1 for _, r in hoje if r.get("tipo") == "alocar")
+        n_ver = len(hoje) - n_aloc
+        n_prob = sum(1 for _, r in hoje if hist_tom(r) == "err")
+        resumo = tk.Frame(B, bg=C.INK)
+        resumo.pack(fill="x", padx=28, pady=(14, 0))
+        if hoje:
+            txt = (f"Hoje você fez {n_aloc} {'alocação' if n_aloc == 1 else 'alocações'} e "
+                   f"{n_ver} {'verificação' if n_ver == 1 else 'verificações'}.")
+        else:
+            txt = "Nenhuma ação registrada hoje ainda."
+        tk.Label(resumo, text=txt, font=fnt(11), bg=C.INK, fg=C.TEXT2).pack(side="left")
+        if n_prob:
+            tk.Label(resumo, text=f"{n_prob} com problema.", font=fnt(11, "bold"), bg=C.INK,
+                     fg=C.ERR, padx=6).pack(side="left")
+
+        no_ar = sum(1 for d in OPERACOES.values() if op_configurada(d) and em_horario(d["horario"]))
+        secao(B, "Operações", f"{no_ar} no horário agora")
+        tabela = tk.Frame(B, bg=C.INK)
+        tabela.pack(fill="x", padx=28)
+        cols = ((0, 4), (1, 240), (2, 130), (3, 130), (4, 90), (5, 100), (6, 120))
+
+        def grade(f):
+            for c, ms in cols:
+                f.grid_columnconfigure(c, minsize=ms, weight=1 if c == 1 else 0)
+
+        cab = tk.Frame(tabela, bg=C.INK)
+        cab.pack(fill="x", pady=(0, 4))
+        grade(cab)
+        for c, t in ((1, "Operação"), (2, "Sistema"), (3, "Horário"), (4, "Alocações"),
+                     (5, "Verificações"), (6, "Última ação")):
+            tk.Label(cab, text=t, font=fnt(8), bg=C.INK, fg=C.MUTED, anchor="w",
+                     padx=16 if c == 1 else 0).grid(row=0, column=c, sticky="w")
+
+        for nome, d in OPERACOES.items():
+            pronto = op_configurada(d)
+            do_op = [(dt, r) for dt, r in hoje if r.get("operacao") == nome]
+            row = tk.Frame(tabela, bg=C.SURFACE, pady=11)
+            row.pack(fill="x", pady=(0, 2))
+            grade(row)
+            tk.Frame(row, bg=d["cor"] if pronto else C.LINE, width=4).grid(row=0, column=0, sticky="nsw", rowspan=2)
+            nm = tk.Frame(row, bg=C.SURFACE, padx=16)
+            nm.grid(row=0, column=1, sticky="w")
+            tk.Label(nm, text=nome, font=fnt(11, "bold"), bg=C.SURFACE,
+                     fg=d["cor"] if pronto else C.MUTED, anchor="w").pack(anchor="w")
+            tk.Label(nm, text=d.get("descricao", ""), font=fnt(9), bg=C.SURFACE,
+                     fg=C.TEXT2 if pronto else C.MUTED, anchor="w", justify="left",
+                     wraplength=250).pack(anchor="w")
+            tk.Label(row, text=d.get("sistema", ""), font=fnt(9), bg=C.SURFACE, fg=C.TEXT2,
+                     anchor="w").grid(row=0, column=2, sticky="w")
+            hr = tk.Frame(row, bg=C.SURFACE)
+            hr.grid(row=0, column=3, sticky="w")
+            tk.Label(hr, text=d.get("horario", ""), font=fnt(10, num=True), bg=C.SURFACE,
+                     fg=C.TEXT, anchor="w").pack(anchor="w")
+            if em_horario(d.get("horario", "")):
+                tk.Label(hr, text="no horário", font=fnt(8, "bold"), bg=C.SURFACE, fg=C.OK).pack(anchor="w")
+            else:
+                tk.Label(hr, text="fora do horário", font=fnt(8), bg=C.SURFACE, fg=C.MUTED).pack(anchor="w")
+            if pronto:
+                na = sum(1 for _, r in do_op if r.get("tipo") == "alocar")
+                for c, v in ((4, na), (5, len(do_op) - na)):
+                    tk.Label(row, text=str(v), font=fnt(15, "bold", num=True), bg=C.SURFACE,
+                             fg=C.TEXT if v else C.MUTED, anchor="w").grid(row=0, column=c, sticky="w")
+                ult = fmt_quando(do_op[0][0]) if do_op else "nada hoje"
+                tk.Label(row, text=ult, font=fnt(9), bg=C.SURFACE,
+                         fg=C.TEXT2 if do_op else C.MUTED, anchor="w").grid(row=0, column=6, sticky="w")
+                clicavel(row, lambda n=nome: self.show_operacao(n), C.SURFACE, C.RAISED)
+            else:
+                pill(row, "em breve", C.MUTED).grid(row=0, column=4, sticky="w")
+
+        secao(B, "Atividade de hoje", f"{len(hoje)} {'registro' if len(hoje) == 1 else 'registros'}")
+        self._feed(B, hoje[:12], titulo_vazio="Nada por aqui ainda.",
+                   texto_vazio="Escolha uma operação na lateral para alocar um arquivo ou registrar uma verificação.")
+        if len(hoje) > 12:
+            f = tk.Frame(B, bg=C.INK)
+            f.pack(fill="x", padx=28, pady=(8, 0))
+            Btn(f, "Ver histórico completo", self.show_historico, kind="ghost", size=9).pack(anchor="w")
+        tk.Frame(B, bg=C.INK, height=36).pack()
+
+        # Espaçador antes do rodapé
+        tk.Frame(B, bg=C.INK, height=36).pack()
+
+        # Rodapé simples com a versão do sistema
+        f_rodape = tk.Frame(B, bg=C.INK)
+        f_rodape.pack(fill="x", padx=28, pady=(0, 12))
+        tk.Label(f_rodape, text="VERSÃO BETA 1.1", bg=C.INK, fg="gray", font=("Arial", 8)).pack(side="right")
+
+
+    def show_historico(self):
+        B = self._pagina("Histórico", "Últimos 200 registros de alocações e verificações.", "hist")
+        filtros = {"dias": "1", "op": ""}
+        barra = tk.Frame(B, bg=C.INK)
+        barra.pack(fill="x", padx=28, pady=(16, 6))
+        lista = tk.Frame(B, bg=C.INK)
+
+        def render(_=None):
+            for w in lista.winfo_children():
+                w.destroy()
+            dias = None if filtros["dias"] == "all" else int(filtros["dias"])
+            itens = hist_periodo(dias, filtros["op"] or None)
+            tk.Label(lista, text=f"{len(itens)} {'registro' if len(itens) == 1 else 'registros'}",
+                     font=fnt(9), bg=C.INK, fg=C.MUTED, anchor="w").pack(fill="x", padx=28, pady=(8, 8))
+            self._feed(lista, itens, com_data=True, titulo_vazio="Nenhum registro neste filtro.",
+                       texto_vazio="Amplie o período ou escolha outra operação.")
+
+        def set_f(chave):
+            def f(v):
+                filtros[chave] = v
+                render()
+            return f
+
+        Segmented(barra, [("Hoje", "1"), ("7 dias", "7"), ("Tudo", "all")], "1",
+                  set_f("dias")).pack(side="left")
+        ops = [("Todas", "")] + [(n, n) for n, d in OPERACOES.items() if op_configurada(d)]
+        cores = {n: d["cor"] for n, d in OPERACOES.items()}
+        Segmented(barra, ops, "", set_f("op"), cores).pack(side="left", padx=(12, 0))
+        lista.pack(fill="x")
+        render()
+        tk.Frame(B, bg=C.INK, height=36).pack()
+        
+       
+
+    def show_atalhos(self):
+        B = self._pagina("Acesso rápido",
+                         "Pastas e arquivos das operações — clique para abrir.",
+                         "atalhos")
+
+        total = sum(len(v) for v in ATALHOS.values())
+        resumo = tk.Frame(B, bg=C.INK)
+        resumo.pack(fill="x", padx=28, pady=(14, 0))
+        tk.Label(resumo, text=f"{total} atalhos em {len(ATALHOS)} operações",
+                 font=fnt(11), bg=C.INK, fg=C.TEXT2).pack(side="left")
+
+        for nome_op, itens in ATALHOS.items():
+            d = OPERACOES.get(nome_op, {})
+            cor_op = d.get("cor", C.ACCENT)
+
+            sec = tk.Frame(B, bg=C.INK, padx=28)
+            sec.pack(fill="x", pady=(22, 8))
+            ponto(sec, cor_op, C.INK, tam=10).pack(side="left")
+            tk.Label(sec, text=nome_op, font=fnt(13, "bold"),
+                     bg=C.INK, fg=cor_op, padx=10).pack(side="left")
+            tk.Label(sec, text=f"{len(itens)} {'item' if len(itens) == 1 else 'itens'}",
+                     font=fnt(9), bg=C.INK, fg=C.MUTED).pack(side="left", pady=(3, 0))
+
+            box = tk.Frame(B, bg=C.INK)
+            box.pack(fill="x", padx=28)
+
+            for at in itens:
+                is_pasta = at["tipo"] == "pasta"
+                icone = "📂" if is_pasta else "📄"
+                tipo_lbl = "Pasta" if is_pasta else "Arquivo"
+
+                card = tk.Frame(box, bg=C.SURFACE, padx=18, pady=12)
+                card.pack(fill="x", pady=(0, 4))
+
+                topo = tk.Frame(card, bg=C.SURFACE)
+                topo.pack(fill="x")
+                tk.Label(topo, text=f"{icone}  {at['nome']}",
+                         font=fnt(10, "bold"), bg=C.SURFACE,
+                         fg=C.TEXT, anchor="w").pack(side="left")
+                pill(topo, tipo_lbl, cor_op).pack(side="right")
+
+                tk.Label(card, text=at["caminho"], font=fnt(8),
+                         bg=C.SURFACE, fg=C.MUTED, anchor="w",
+                         wraplength=700, justify="left").pack(fill="x", pady=(4, 0))
+
+                def abrir(caminho=at["caminho"], nome=at["nome"],
+                          tipo=at["tipo"]):
+                    abre = getattr(os, "startfile", None)
+                    if not abre:
+                        self.toast.show("Não suportado",
+                                        "os.startfile indisponível.", "err")
+                        return
+                    if tipo == "pasta":
+                        if os.path.isdir(caminho):
+                            abre(caminho)
+                            self.toast.show("Pasta aberta", nome)
+                        else:
+                            self.toast.show("Pasta não encontrada", caminho, "err")
+                    else:
+                        if os.path.isfile(caminho):
+                            abre(caminho)
+                            self.toast.show("Abrindo arquivo", nome)
+                        else:
+                            pasta_pai = os.path.dirname(caminho)
+                            if os.path.isdir(pasta_pai):
+                                abre(pasta_pai)
+                                self.toast.show("Arquivo não encontrado",
+                                                f"Pasta aberta.\n{os.path.basename(caminho)}", "warn")
+                            else:
+                                self.toast.show("Não encontrado", caminho, "err")
+
+                clicavel(card, abrir, C.SURFACE, C.RAISED)
+
+        tk.Frame(B, bg=C.INK, height=36).pack()
+
+
+
+# ── Célula 17 (markdown) ────────────────────────────────────────────────
+# #### ============================================================
+# #### CÉLULA 2C — OPERAÇÃO E ALOCAR ARQUIVO
+# #### ============================================================
+
+# ── Célula 18 (código) ──────────────────────────────────────────────────
+
+def _show_operacao(self, nome_op):
+    d = OPERACOES[nome_op]
+    cor = d["cor"]
+    B = self._pagina(nome_op, d["descricao"], f"op:{nome_op}", nome_op, ("Painel do dia", self.show_home))
+
+    fatos = tk.Frame(B, bg=C.INK)
+    fatos.pack(fill="x", padx=28, pady=(16, 0))
+    no_h = em_horario(d["horario"])
+    for rot, val, extra in (("Sistema", d["sistema"], None),
+                            ("Horário", d["horario"], ("no horário", C.OK) if no_h else ("fora do horário", C.MUTED)),
+                            ("Bases", str(len(d["bases"])), None),
+                            ("Verificações", str(len(d["verificacoes_email"])), None)):
+        f = tk.Frame(fatos, bg=C.INK)
+        f.pack(side="left", padx=(0, 40))
+        tk.Label(f, text=rot, font=fnt(8), bg=C.INK, fg=C.MUTED, anchor="w").pack(anchor="w")
+        r = tk.Frame(f, bg=C.INK)
+        r.pack(anchor="w")
+        tk.Label(r, text=val, font=fnt(12, "bold", num=True), bg=C.INK, fg=C.TEXT).pack(side="left")
+        if extra:
+            tk.Label(r, text=extra[0], font=fnt(8, "bold"), bg=C.INK, fg=extra[1], padx=8).pack(side="left", pady=(3, 0))
+
+    acoes = tk.Frame(B, bg=C.INK)
+    acoes.pack(fill="x", padx=28, pady=(22, 0))
+    acoes.grid_columnconfigure((0, 1), weight=1, uniform="acoes")
+
+    def painel(col, titulo, texto):
+        p = tk.Frame(acoes, bg=C.SURFACE, padx=22, pady=18)
+        p.grid(row=0, column=col, sticky="nsew", padx=(0, 8) if col == 0 else (8, 0))
+        tk.Frame(p, bg=cor, height=3, width=36).pack(anchor="w", pady=(0, 12))
+        tk.Label(p, text=titulo, font=fnt(14, "bold"), bg=C.SURFACE, fg=C.TEXT, anchor="w").pack(fill="x")
+        tk.Label(p, text=texto, font=fnt(9), bg=C.SURFACE, fg=C.TEXT2, anchor="w").pack(fill="x", pady=(2, 12))
+        corpo = tk.Frame(p, bg=C.SURFACE)
+        corpo.pack(fill="both", expand=True)
+        return p, corpo
+
+    p1, c1 = painel(0, "Alocar arquivo", "Leva o download do dia para a pasta da base.")
+    status_lbls = []
+    if d["bases"]:
+        for nb, db in d["bases"].items():
+            tipo_aloc = db.get("tipo_alocacao", "mover")
+            tk.Label(c1, text=nb, font=fnt(9, "bold"), bg=C.SURFACE, fg=C.TEXT, anchor="w").pack(fill="x", pady=(6, 2))
+            if tipo_aloc == "colar_planilha":
+                plan_nome = os.path.basename(db["planilha"])
+                tk.Label(c1, text=f"→ {db['sheet']} ({plan_nome})", font=fnt(8),
+                         bg=C.SURFACE, fg=C.MUTED, anchor="w").pack(fill="x")
+            for arq in db["arquivos"]:
+                nf = f"{arq['nome_destino']}{arq['extensao']}"
+                r = tk.Frame(c1, bg=C.SURFACE)
+                r.pack(fill="x", pady=1)
+                tk.Label(r, text=nf, font=fnt(9), bg=C.SURFACE, fg=C.TEXT2, anchor="w").pack(side="left")
+                st = tk.Label(r, text="verificando...", font=fnt(8), bg=C.SURFACE, fg=C.MUTED)
+                st.pack(side="right")
+                status_lbls.append((db["destino"], nf, st))
+        Btn(p1, "Alocar arquivo", lambda: self.show_alocar(nome_op), kind="primary").pack(anchor="w", pady=(16, 0))
+    else:
+        tk.Label(c1, text="Nenhuma base configurada para esta operação.", font=fnt(9),
+                 bg=C.SURFACE, fg=C.MUTED, anchor="w").pack(fill="x")
+
+    p2, c2 = painel(1, "Verificar e-mail", "Siga o checklist e registre o resultado.")
+    hoje_op = hist_periodo(1, nome_op)
+    if d["verificacoes_email"]:
+        for v in d["verificacoes_email"]:
+            r = tk.Frame(c2, bg=C.SURFACE)
+            r.pack(fill="x", pady=2)
+            tk.Label(r, text=v["nome"], font=fnt(9), bg=C.SURFACE, fg=C.TEXT2, anchor="w").pack(side="left")
+            reg = next(((dt, x) for dt, x in hoje_op
+                        if x.get("tipo") == "verificar_email" and x.get("descricao") == v["nome"]), None)
+            if reg:
+                tk.Label(r, text=f"{rotulo_status(reg[1])} às {reg[0]:%H:%M}", font=fnt(8),
+                         bg=C.SURFACE, fg=TOM[hist_tom(reg[1])]).pack(side="right")
+            else:
+                tk.Label(r, text="pendente hoje", font=fnt(8), bg=C.SURFACE, fg=C.MUTED).pack(side="right")
+        Btn(p2, "Abrir verificações", lambda: self.show_verificar(nome_op), kind="primary").pack(anchor="w", pady=(16, 0))
+    else:
+        tk.Label(c2, text="Nenhuma verificação configurada para esta operação.", font=fnt(9),
+                 bg=C.SURFACE, fg=C.MUTED, anchor="w").pack(fill="x")
+
+    if status_lbls:
+        def carregar():
+            return [check_dest(dd, nf) for dd, nf, _ in status_lbls]
+
+        def preencher(infos):
+            for (_, _, lbl), info in zip(status_lbls, infos or []):
+                if lbl.winfo_exists():
+                    t, c = status_destino(info)
+                    lbl.configure(text=t, fg=c)
+
+        run_async(acoes, carregar, preencher)
+
+
+# ════════════════════════════════════════════════════
+    # ATALHOS RÁPIDOS
+    # ════════════════════════════════════════════════════
+    atalhos = ATALHOS.get(nome_op, [])
+    if atalhos:
+        secao(B, "Acesso rápido", "pastas e arquivos da operação")
+        at_box = tk.Frame(B, bg=C.INK)
+        at_box.pack(fill="x", padx=28)
+
+        row_at = None
+        for i, at in enumerate(atalhos):
+            if i % 4 == 0:
+                row_at = tk.Frame(at_box, bg=C.INK)
+                row_at.pack(fill="x", pady=(0, 4))
+
+            is_pasta = at["tipo"] == "pasta"
+            icone = "📂" if is_pasta else "📄"
+            bg_at = C.SURFACE
+
+            card_at = tk.Frame(row_at, bg=bg_at, padx=14, pady=10)
+            card_at.pack(side="left", padx=(0, 6), fill="x", expand=True)
+
+            cab_at = tk.Frame(card_at, bg=bg_at)
+            cab_at.pack(fill="x")
+            tk.Label(cab_at, text=f"{icone}  {at['nome']}",
+                     font=fnt(9, "bold"), bg=bg_at, fg=C.TEXT,
+                     anchor="w").pack(side="left")
+
+            tipo_lbl = "Pasta" if is_pasta else "Arquivo"
+            tk.Label(cab_at, text=tipo_lbl, font=fnt(8),
+                     bg=bg_at, fg=C.MUTED).pack(side="right")
+
+            # Caminho truncado
+            caminho_curto = at["caminho"]
+            if len(caminho_curto) > 55:
+                caminho_curto = "..." + caminho_curto[-52:]
+            tk.Label(card_at, text=caminho_curto, font=fnt(8),
+                     bg=bg_at, fg=C.MUTED, anchor="w").pack(fill="x", pady=(2, 0))
+
+            def abrir_atalho(caminho=at["caminho"], nome=at["nome"],
+                             tipo=at["tipo"]):
+                abre = getattr(os, "startfile", None)
+                if not abre:
+                    self.toast.show("Não suportado",
+                                    "os.startfile não disponível neste sistema.", "err")
+                    return
+                if tipo == "pasta":
+                    if os.path.isdir(caminho):
+                        abre(caminho)
+                        self.toast.show("Pasta aberta", nome)
+                    else:
+                        self.toast.show("Pasta não encontrada",
+                                        f"Verifique a conexão de rede.\n{caminho}", "err")
+                else:
+                    if os.path.isfile(caminho):
+                        abre(caminho)
+                        self.toast.show("Abrindo arquivo", nome)
+                    else:
+                        # Tentar abrir a pasta pai
+                        pasta_pai = os.path.dirname(caminho)
+                        if os.path.isdir(pasta_pai):
+                            abre(pasta_pai)
+                            self.toast.show("Arquivo não encontrado",
+                                            f"A pasta foi aberta.\n{os.path.basename(caminho)}",
+                                            "warn")
+                        else:
+                            self.toast.show("Arquivo não encontrado",
+                                            f"Verifique a conexão de rede.\n{caminho}", "err")
+
+            clicavel(card_at, abrir_atalho, C.SURFACE, C.RAISED)
+
+
+    secao(B, f"Atividade de hoje em {nome_op}", f"{len(hoje_op)} {'registro' if len(hoje_op) == 1 else 'registros'}")
+    self._feed(B, hoje_op, titulo_vazio="Nenhuma ação nesta operação hoje.",
+               texto_vazio="Quando você alocar um arquivo ou registrar uma verificação, ela aparece aqui.")
+    tk.Frame(B, bg=C.INK, height=36).pack()
+
+
+class Etapas(tk.Canvas):
+    NOMES = ("Base", "Destino", "Origem", "Confirmar")
+
+    def __init__(self, parent, cor):
+        super().__init__(parent, height=34, bg=parent.cget("bg"), highlightthickness=0)
+        self.cor, self.atual = cor, 0
+        self.bind("<Configure>", lambda e: self.draw())
+
+    def set(self, atual):
+        self.atual = atual
+        self.draw()
+
+    def draw(self):
+        self.delete("all")
+        w = self.winfo_width()
+        if w < 100:
+            return
+        f = tkfont.Font(family=F.UI, size=10, weight="bold")
+        seg = w / len(self.NOMES)
+        for i, nome in enumerate(self.NOMES):
+            x, y = i * seg + 12, 17
+            feito, atual = i < self.atual, i == self.atual
+            if feito:
+                self.create_oval(x - 11, y - 11, x + 11, y + 11, fill=self.cor, outline="")
+                self.create_line(x - 5, y, x - 1, y + 4, x + 6, y - 4, fill=C.INK, width=2.4,
+                                 capstyle="round", joinstyle="round")
+            else:
+                self.create_oval(x - 11, y - 11, x + 11, y + 11, fill=C.INK,
+                                 outline=self.cor if atual else C.LINE, width=2)
+                self.create_text(x, y, text=str(i + 1), font=fnt(9, "bold", num=True),
+                                 fill=self.cor if atual else C.MUTED)
+            self.create_text(x + 20, y, text=nome, anchor="w", font=(F.UI, 10, "bold"),
+                             fill=C.TEXT if (feito or atual) else C.MUTED)
+            if i < len(self.NOMES) - 1:
+                x0 = x + 20 + f.measure(nome) + 14
+                x1 = (i + 1) * seg + 12 - 24
+                if x1 > x0:
+                    self.create_line(x0, y, x1, y, fill=self.cor if feito else C.LINE, width=2)
+
+
+def _show_alocar(self, nome_op):
+    d = OPERACOES[nome_op]
+    cor = d["cor"]
+    B = self._pagina("Alocar arquivo", f"{nome_op}: {d['descricao']}", f"op:{nome_op}", nome_op,
+                     (nome_op, lambda: self.show_operacao(nome_op)))
+    estado = {"base": None, "arq": None, "orig": None, "busca": "", "dl": list_downloads(),
+              "info": {}, "ultimo": None}
+
+    etapas = Etapas(B, cor)
+    etapas.pack(fill="x", padx=28, pady=(18, 0))
+
+    secao(B, "Base", "pasta onde o arquivo vai ficar", pady=(22, 10))
+    sec_base = tk.Frame(B, bg=C.INK)
+    sec_base.pack(fill="x", padx=28)
+    secao(B, "Arquivo de destino", "o arquivo que será criado ou substituído", pady=(26, 10))
+    sec_dest = tk.Frame(B, bg=C.INK)
+    sec_dest.pack(fill="x", padx=28)
+    cab_orig = secao(B, "Arquivo de origem", "da sua pasta Downloads", pady=(26, 10))
+    busca = Campo(cab_orig, "Buscar pelo nome", width=26)
+    Btn(cab_orig, "Atualizar lista", lambda: recarregar_dl(), kind="ghost", size=9, pady=5).pack(side="right")
+    busca.pack(side="right", padx=(0, 8))
+    sec_orig = tk.Frame(B, bg=C.INK)
+    sec_orig.pack(fill="x", padx=28)
+    secao(B, "Confirmar", pady=(26, 10))
+    sec_res = tk.Frame(B, bg=C.INK)
+    sec_res.pack(fill="x", padx=28)
+    tk.Frame(B, bg=C.INK, height=40).pack()
+
+    def limpar(f):
+        for w in f.winfo_children():
+            w.destroy()
+
+    def pintar_etapas():
+        etapas.set(0 if not estado["base"] else 1 if not estado["arq"] else 2 if not estado["orig"] else 3)
+
+    def render_base():
+        limpar(sec_base)
+        for nb, db in d["bases"].items():
+            sel = estado["base"] == nb
+            t = tk.Frame(sec_base, bg=C.RAISED if sel else C.SURFACE, padx=18, pady=12,
+                         highlightthickness=2, highlightbackground=cor if sel else C.SURFACE)
+            t.pack(side="left", padx=(0, 10))
+            bg = t.cget("bg")
+            tk.Label(t, text=nb, font=fnt(11, "bold"), bg=bg, fg=cor if sel else C.TEXT, anchor="w").pack(anchor="w")
+            tipo_aloc = db.get("tipo_alocacao", "mover")
+            if tipo_aloc == "colar_planilha":
+                cauda = f"→ {db['sheet']} ({os.path.basename(db['planilha'])})"
+            else:
+                cauda = "\\" + "\\".join(db["destino"].replace("/", "\\").rstrip("\\").split("\\")[-2:])
+            tk.Label(t, text=cauda if len(cauda) < 60 else "..." + cauda[-55:],
+                     font=fnt(8), bg=bg, fg=C.MUTED, anchor="w").pack(anchor="w")
+            if not sel:
+                clicavel(t, lambda n=nb: selecionar_base(n), C.SURFACE, C.RAISED)
+
+    def selecionar_base(nb):
+        estado.update(base=nb, arq=None, orig=None, info={})
+        arquivos = d["bases"][nb]["arquivos"]
+        if len(arquivos) == 1:
+            estado["arq"] = arquivos[0]
+        render_base()
+        render_dest()
+        render_orig()
+        render_res()
+        pintar_etapas()
+        dest = d["bases"][nb]["destino"]
+
+        def carregar():
+            return {f"{a['nome_destino']}{a['extensao']}": check_dest(dest, f"{a['nome_destino']}{a['extensao']}")
+                    for a in arquivos}
+
+        def pronto(infos):
+            if estado["base"] == nb and infos:
+                estado["info"] = infos
+                render_dest()
+                render_res()
+
+        run_async(sec_dest, carregar, pronto)
+
+    def render_dest():
+        limpar(sec_dest)
+        if not estado["base"]:
+            vazio(sec_dest, "Escolha a base primeiro.", "Os arquivos de destino aparecem aqui.", padx=0)
+            return
+        base_cfg = d["bases"][estado["base"]]
+        tipo_aloc = base_cfg.get("tipo_alocacao", "mover")
+        for arq in base_cfg["arquivos"]:
+            nf = f"{arq['nome_destino']}{arq['extensao']}"
+            sel = estado["arq"] is arq
+            r = tk.Frame(sec_dest, bg=C.SURFACE, padx=18, pady=10, highlightthickness=2,
+                         highlightbackground=cor if sel else C.SURFACE)
+            r.pack(fill="x", pady=(0, 4))
+            esq = tk.Frame(r, bg=C.SURFACE)
+            esq.pack(side="left", fill="x", expand=True)
+            tk.Label(esq, text=nf, font=fnt(10, "bold"), bg=C.SURFACE, fg=cor if sel else C.TEXT,
+                     anchor="w").pack(anchor="w")
+            desc = arq["descricao"]
+            if tipo_aloc == "colar_planilha":
+                desc = f"{desc}  —  lê da linha {base_cfg.get('linha_inicio_origem', 2)} até o fim"
+            tk.Label(esq, text=desc, font=fnt(9), bg=C.SURFACE, fg=C.TEXT2, anchor="w").pack(anchor="w")
+            info = estado["info"].get(nf)
+            if info:
+                t, c = status_destino(info)
+                if info.get("existe"):
+                    t = f"{t}   {info['tam']}"
+            else:
+                t, c = "verificando...", C.MUTED
+            tk.Label(r, text=t, font=fnt(8), bg=C.SURFACE, fg=c).pack(side="right")
+            if not sel:
+                clicavel(r, lambda a=arq: selecionar_arq(a), C.SURFACE, C.RAISED)
+
+    def selecionar_arq(arq):
+        estado["arq"] = arq
+        render_dest()
+        render_orig()
+        render_res()
+        pintar_etapas()
+
+    def recarregar_dl():
+        estado["dl"] = list_downloads()
+        if estado["orig"] and not any(a["caminho"] == estado["orig"]["caminho"] for a in estado["dl"]):
+            estado["orig"] = None
+        render_orig()
+        render_res()
+        pintar_etapas()
+
+    def on_busca():
+        estado["busca"] = busca.valor().lower()
+        render_orig()
+
+    busca.on_change = on_busca
+
+    def render_orig():
+        limpar(sec_orig)
+        # Se é clipboard, não precisa selecionar arquivo
+        if estado["base"] and d["bases"].get(estado["base"], {}).get("tipo_alocacao") == "colar_clipboard":
+            estado["orig"] = {"nome": "clipboard (CMS)", "caminho": "__clipboard__",
+                              "ext": ".txt", "tam_fmt": "—", "mtime": datetime.now(),
+                              "mod": "agora"}
+            f = tk.Frame(sec_orig, bg=C.SURFACE, padx=18, pady=14,
+                         highlightthickness=2, highlightbackground=cor)
+            f.pack(fill="x")
+            tk.Label(f, text="📋  Dados do clipboard (CMS)", font=fnt(11, "bold"),
+                     bg=C.SURFACE, fg=cor, anchor="w").pack(anchor="w")
+            tk.Label(f, text="Exporte do CMS → Área de Armazenamento antes de confirmar.\n"
+                     "Separador: (guia) / Legendas: desmarcado / Tempos em segundos.",
+                     font=fnt(9), bg=C.SURFACE, fg=C.TEXT2, anchor="w",
+                     justify="left", wraplength=600).pack(anchor="w", pady=(4, 0))
+            render_res()
+            pintar_etapas()
+            return
+        if not estado["dl"]:
+            vazio(sec_orig, "Nenhum arquivo em Downloads.",
+                  f"Baixe o relatório do sistema e clique em Atualizar lista. Pasta lida: {PASTA_DOWNLOADS}", padx=0)
+            return
+        ext_alvo = estado["arq"]["extensao"].lower() if estado["arq"] else None
+        hoje = datetime.now().date()
+        itens = [a for a in estado["dl"] if estado["busca"] in a["nome"].lower()]
+
+        def ordem(a):
+            casa = ext_alvo is not None and a["ext"] == ext_alvo
+            return (0 if casa and a["mtime"].date() == hoje else 1 if casa else 2, -a["mtime"].timestamp())
+
+        itens.sort(key=ordem)
+        if not itens:
+            vazio(sec_orig, "Nenhum arquivo com esse nome.", "Confira a busca ou clique em Atualizar lista.", padx=0)
+            return
+        for a in itens[:8]:
+            sel = estado["orig"] is not None and estado["orig"]["caminho"] == a["caminho"]
+            r = tk.Frame(sec_orig, bg=C.SURFACE, padx=18, pady=9, highlightthickness=2,
+                         highlightbackground=cor if sel else C.SURFACE)
+            r.pack(fill="x", pady=(0, 3))
+            esq = tk.Frame(r, bg=C.SURFACE)
+            esq.pack(side="left", fill="x", expand=True)
+            tk.Label(esq, text=a["nome"], font=fnt(10, "bold" if sel else "normal"), bg=C.SURFACE,
+                     fg=cor if sel else C.TEXT, anchor="w").pack(anchor="w")
+            tk.Label(esq, text=f"{a['tam_fmt']}      modificado {fmt_quando(a['mtime'])}", font=fnt(8),
+                     bg=C.SURFACE, fg=C.MUTED, anchor="w").pack(anchor="w")
+            casa = ext_alvo is not None and a["ext"] == ext_alvo
+            pill(r, a["ext"], C.TEXT2 if casa or not ext_alvo else C.MUTED).pack(side="right")
+            if casa and a["mtime"].date() == hoje:
+                pill(r, "sugerido", C.OK).pack(side="right", padx=(0, 6))
+            if not sel:
+                clicavel(r, lambda x=a: selecionar_orig(x), C.SURFACE, C.RAISED)
+        if len(itens) > 8:
+            tk.Label(sec_orig, text=f"Mostrando 8 de {len(itens)} arquivos. Use a busca para achar os demais.",
+                     font=fnt(9), bg=C.INK, fg=C.MUTED, anchor="w").pack(fill="x", pady=(4, 0))
+
+    def selecionar_orig(a):
+        estado["orig"] = a
+        render_orig()
+        render_res()
+        pintar_etapas()
+
+    def render_res():
+        limpar(sec_res)
+        if estado["ultimo"]:
+            u = estado["ultimo"]
+            ok = tk.Frame(sec_res, bg=C.SURFACE, padx=18, pady=12)
+            ok.pack(fill="x", pady=(0, 10))
+            tk.Frame(ok, bg=C.OK, width=3).pack(side="left", fill="y", padx=(0, 14))
+            tx = tk.Frame(ok, bg=C.SURFACE)
+            tx.pack(side="left", fill="x")
+            tk.Label(tx, text=f"Arquivo alocado às {u['hora']}", font=fnt(10, "bold"), bg=C.SURFACE,
+                     fg=C.OK, anchor="w").pack(anchor="w")
+            tk.Label(tx, text=f"{u['de']}  →  {u['para']}", font=fnt(9), bg=C.SURFACE, fg=C.TEXT2,
+                     anchor="w").pack(anchor="w")
+        base, arq, orig = estado["base"], estado["arq"], estado["orig"]
+        if not (base and arq and orig):
+            faltam = [n for n, v in (("a base", base), ("o arquivo de destino", arq),
+                                     ("o arquivo de origem", orig)) if not v]
+            vazio(sec_res, f"Falta escolher {juntar(faltam)}.",
+                  "O resumo aparece aqui. Nada é movido até você confirmar.", padx=0)
+            return
+        nf = f"{arq['nome_destino']}{arq['extensao']}"
+        base_cfg = d["bases"][base]
+        dest_dir = base_cfg["destino"]
+        tipo_aloc = base_cfg.get("tipo_alocacao", "mover")
+
+        card = tk.Frame(sec_res, bg=C.SURFACE, padx=24, pady=20)
+        card.pack(fill="x")
+        fluxo = tk.Frame(card, bg=C.SURFACE)
+        fluxo.pack(fill="x")
+        fluxo.grid_columnconfigure((0, 2), weight=1, uniform="fluxo")
+
+        if tipo_aloc in ("colar_clipboard", "colar_planilha"):
+            para_nome = f"{base_cfg['sheet']} ({os.path.basename(base_cfg['planilha'])})"
+            para_onde = base_cfg["planilha"]
+        else:
+            para_nome = nf
+            para_onde = dest_dir
+
+        de_nome = "clipboard (CMS)" if tipo_aloc == "colar_clipboard" else orig["nome"]
+        de_onde = "Área de Armazenamento do CMS" if tipo_aloc == "colar_clipboard" else "Downloads"
+        for col, rot, nome_col, onde, c in ((0, "De", de_nome, de_onde, C.TEXT),
+                                             (2, "Para", para_nome, para_onde, cor)):
+            b = tk.Frame(fluxo, bg=C.SURFACE)
+            b.grid(row=0, column=col, sticky="nw")
+            tk.Label(b, text=rot, font=fnt(8), bg=C.SURFACE, fg=C.MUTED, anchor="w").pack(anchor="w")
+            tk.Label(b, text=nome_col, font=fnt(12, "bold"), bg=C.SURFACE, fg=c, anchor="w",
+                     wraplength=330, justify="left").pack(anchor="w")
+            tk.Label(b, text=onde, font=fnt(8), bg=C.SURFACE, fg=C.TEXT2, anchor="w",
+                     wraplength=330, justify="left").pack(anchor="w", pady=(2, 0))
+        tk.Label(fluxo, text="→", font=fnt(22), bg=C.SURFACE, fg=C.MUTED, padx=18).grid(row=0, column=1)
+
+        avisos = []
+        if tipo_aloc == "colar_planilha":
+            if not os.path.exists(base_cfg["planilha"]):
+                avisos.append(("A planilha de destino não foi encontrada. Verifique a conexão de rede.", "err"))
+            avisos.append((f"A aba '{base_cfg['sheet']}' será limpa antes de colar os dados.", "warn"))
+            avisos.append((f"Os dados serão lidos a partir da linha {base_cfg.get('linha_inicio_origem', 2)} do arquivo de origem.", "warn"))
+        else:
+            info = estado["info"].get(nf)
+            if info and not info.get("acessivel"):
+                avisos.append(("A pasta de destino não está acessível agora. Confira a conexão com a rede.", "err"))
+            elif info and info.get("existe"):
+                avisos.append((f"O arquivo atual será substituído (modificado {fmt_quando(info['mtime'])}, {info['tam']}).", "warn"))
+        if orig["ext"] != arq["extensao"].lower():
+            avisos.append((f"A origem é {orig['ext']} e o destino espera {arq['extensao']}. "
+                           f"Confira se escolheu o download certo.", "warn"))
+        if orig["mtime"].date() != datetime.now().date():
+            avisos.append((f"Este download é de {fmt_quando(orig['mtime'])}, não de hoje.", "warn"))
+        if avisos:
+            av = tk.Frame(card, bg=C.SURFACE)
+            av.pack(fill="x", pady=(16, 0))
+            for t, tom in avisos:
+                aviso(av, t, tom)
+
+        tk.Frame(card, bg=C.LINE, height=1).pack(fill="x", pady=16)
+        acao = tk.Frame(card, bg=C.SURFACE)
+        acao.pack(fill="x")
+        btn = Btn(acao, "Executar alocação", kind="primary", size=11, padx=26, pady=10, enabled=False)
+        chk = CheckRow(acao, "Revisei a origem e o destino",
+                       on_change=lambda: btn.set(enabled=chk.valor, command=executar))
+        chk.pack(side="left")
+        btn.pack(side="right")
+
+        def executar():
+            if not chk.valor:
+                return
+            caminho = orig["caminho"]
+            if not os.path.exists(caminho):
+                self.toast.show("Arquivo de origem não encontrado",
+                                f"{orig['nome']} saiu da pasta Downloads. Clique em Atualizar lista.", "err")
+                return
+
+            # ── MODO COLAR EM PLANILHA ──────────────────────
+            if tipo_aloc == "colar_planilha":
+                planilha_path = base_cfg["planilha"]
+                sheet_nome = base_cfg["sheet"]
+                celula_dest = base_cfg.get("celula", "A1")
+                linha_ini = base_cfg.get("linha_inicio_origem", 2)
+
+                if not os.path.exists(planilha_path):
+                    self.toast.show("Planilha de destino não encontrada", planilha_path, "err")
+                    return
+
+                ok_msg = messagebox.askyesno(
+                    "Confirmar cola na planilha",
+                    f"Origem: {orig['nome']}\n"
+                    f"Planilha: {os.path.basename(planilha_path)}\n"
+                    f"Aba: {sheet_nome}\n"
+                    f"Célula: {celula_dest}\n"
+                    f"Leitura a partir da linha: {linha_ini}\n\n"
+                    f"A aba será limpa e os dados serão colados. Continuar?",
+                    icon="warning", parent=self.root)
+                if not ok_msg:
+                    self.toast.show("Operação cancelada", "Nada foi alterado.", "warn")
+                    return
+
+                sucesso, msg = colar_na_planilha(
+                    caminho, planilha_path, sheet_nome, celula_dest, linha_ini)
+
+                if not sucesso:
+                    self.toast.show("Falha ao colar na planilha", msg, "err")
+                    save_hist({
+                        "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                        "tipo": "alocar", "operacao": nome_op,
+                        "descricao": f"{orig['nome']} → {sheet_nome} ({os.path.basename(planilha_path)})",
+                        "arquivo_origem": orig["nome"],
+                        "arquivo_destino": os.path.basename(planilha_path),
+                        "caminho_destino": planilha_path,
+                        "status": f"Problema: {msg}",
+                    })
+                    return
+
+                save_hist({
+                    "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                    "tipo": "alocar", "operacao": nome_op,
+                    "descricao": f"{orig['nome']} → {sheet_nome} ({os.path.basename(planilha_path)})",
+                    "arquivo_origem": orig["nome"],
+                    "arquivo_destino": os.path.basename(planilha_path),
+                    "caminho_destino": planilha_path,
+                    "status": "Sucesso",
+                })
+                self.toast.show("Base colada na planilha", msg)
+                estado["ultimo"] = {
+                    "hora": datetime.now().strftime("%H:%M:%S"),
+                    "de": orig["nome"],
+                    "para": f"{sheet_nome} ({os.path.basename(planilha_path)})",
+                }
+                estado["orig"] = None
+                estado["dl"] = list_downloads()
+                self.atualizar_contexto()
+                render_dest()
+                render_orig()
+                render_res()
+                pintar_etapas()
+                return
+
+            # ── MODO CLIPBOARD → PLANILHA (CMS) ────────────
+            if tipo_aloc == "colar_clipboard":
+                planilha_path = base_cfg["planilha"]
+                sheet_nome = base_cfg["sheet"]
+                celula_dest = base_cfg.get("celula", "A2")
+                max_cols = base_cfg.get("max_colunas", 6)
+
+                if not os.path.exists(planilha_path):
+                    self.toast.show("Planilha de destino não encontrada",
+                                    planilha_path, "err")
+                    return
+
+                # Verificar clipboard antes de confirmar
+                ok_clip, clip_resultado = ler_clipboard_tsv(self.root, max_cols)
+                if not ok_clip:
+                    self.toast.show("Erro no clipboard", clip_resultado, "err")
+                    return
+
+                n_linhas = len(clip_resultado)
+                n_cols = max(len(r) for r in clip_resultado)
+                amostra = " | ".join(clip_resultado[0][:4]) if clip_resultado else ""
+
+                ok_msg = messagebox.askyesno(
+                    "Confirmar cola do clipboard",
+                    f"Dados do clipboard:\n"
+                    f"  • {n_linhas} linhas × {n_cols} colunas\n"
+                    f"  • Primeira linha: {amostra}...\n\n"
+                    f"Planilha: {os.path.basename(planilha_path)}\n"
+                    f"Aba: {sheet_nome}\n"
+                    f"Célula: {celula_dest}\n\n"
+                    f"A aba será limpa (exceto cabeçalho) e os dados colados. Continuar?",
+                    icon="warning", parent=self.root)
+                if not ok_msg:
+                    self.toast.show("Operação cancelada", "Nada foi alterado.", "warn")
+                    return
+
+                sucesso, msg = colar_clipboard_na_planilha(
+                    self.root, planilha_path, sheet_nome, celula_dest, max_cols)
+
+                if not sucesso:
+                    self.toast.show("Falha ao colar clipboard", msg, "err")
+                    save_hist({
+                        "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                        "tipo": "alocar", "operacao": nome_op,
+                        "descricao": f"Clipboard → {sheet_nome} ({os.path.basename(planilha_path)})",
+                        "arquivo_origem": "clipboard (CMS)",
+                        "arquivo_destino": os.path.basename(planilha_path),
+                        "caminho_destino": planilha_path,
+                        "status": f"Problema: {msg}",
+                    })
+                    return
+
+                save_hist({
+                    "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                    "tipo": "alocar", "operacao": nome_op,
+                    "descricao": f"Clipboard → {sheet_nome} ({os.path.basename(planilha_path)})",
+                    "arquivo_origem": "clipboard (CMS)",
+                    "arquivo_destino": os.path.basename(planilha_path),
+                    "caminho_destino": planilha_path,
+                    "status": "Sucesso",
+                })
+                self.toast.show("Dados colados na planilha", msg)
+                estado["ultimo"] = {
+                    "hora": datetime.now().strftime("%H:%M:%S"),
+                    "de": "clipboard (CMS)",
+                    "para": f"{sheet_nome} ({os.path.basename(planilha_path)})",
+                }
+                estado["orig"] = None
+                self.atualizar_contexto()
+                render_dest()
+                render_orig()
+                render_res()
+                pintar_etapas()
+                return
+
+
+            # ── MODO MOVER (padrão) ─────────────────────────
+            if not os.path.exists(dest_dir):
+                self.toast.show("Pasta de destino inacessível", dest_dir, "err")
+                return
+            ok_confirm = messagebox.askyesno("Confirmar alocação",
+                                     f"Origem: {orig['nome']}\nDestino: {nf}\nPasta: {dest_dir}\n\n"
+                                     f"O arquivo será recortado e colado no destino. Continuar?",
+                                     icon="warning", parent=self.root)
+            if not ok_confirm:
+                self.toast.show("Alocação cancelada", "Nada foi movido.", "warn")
+                return
+            dp = os.path.join(dest_dir, nf)
+            try:
+                if os.path.exists(dp):
+                    os.remove(dp)
+                shutil.move(caminho, dp)
+            except PermissionError:
+                self.toast.show("Sem permissão para mover",
+                                "Feche o arquivo se ele estiver aberto no Excel e tente de novo.", "err")
+                return
+            except Exception as e:
+                self.toast.show("Não foi possível alocar", str(e), "err")
+                return
+            save_hist({
+                "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                "tipo": "alocar", "operacao": nome_op,
+                "descricao": f"{nf} → {base}",
+                "arquivo_origem": orig["nome"],
+                "arquivo_destino": nf,
+                "caminho_destino": dest_dir,
+                "status": "Sucesso",
+            })
+            self.toast.show("Arquivo alocado", f"{orig['nome']}  →  {nf}")
+            estado["ultimo"] = {"hora": datetime.now().strftime("%H:%M:%S"),
+                                "de": orig["nome"], "para": nf}
+            estado["orig"] = None
+            estado["dl"] = list_downloads()
+            estado["info"][nf] = check_dest(dest_dir, nf)
+            self.atualizar_contexto()
+            render_dest()
+            render_orig()
+            render_res()
+            pintar_etapas()
+
+    render_base()
+    if len(d["bases"]) == 1:
+        selecionar_base(next(iter(d["bases"])))
+    else:
+        render_dest()
+        render_orig()
+        render_res()
+        pintar_etapas()
+
+
+WFMApp.show_operacao = _show_operacao
+WFMApp.show_alocar = _show_alocar
+
+
+# ── Célula 19 (markdown) ────────────────────────────────────────────────
+# #### ============================================================
+# #### CÉLULA 2D — VERIFICAR E-MAIL E JUSTIFICATIVA
+# #### ============================================================
+
+# ── Célula 20 (código) ──────────────────────────────────────────────────
+
+CAMPOS_JUST = {
+    "desvio_vol": ("Desvio de volume (%)", "ex: 51"),
+    "intervalos_vol": ("Intervalos com desvio", "ex: todos os intervalos"),
+    "maior_vol_hora": ("Maior impacto (hora)", "ex: 10h"),
+    "maior_vol_pct": ("Maior impacto (%)", "ex: 38"),
+    "segundo_vol_hora": ("2º maior (hora)", "ex: 9h30"),
+    "segundo_vol_pct": ("2º maior (%)", "ex: 29"),
+    "desvio_aht": ("Desvio de AHT (%)", "ex: 26.2"),
+    "intervalos_aht": ("Intervalos com desvio", "ex: todos exceto 8h30"),
+    "maior_aht_hora": ("Maior impacto (hora)", "ex: 13h"),
+    "maior_aht_pct": ("Maior impacto (%)", "ex: 40.6"),
+    "segundo_aht_hora": ("2º maior (hora)", "ex: 12h"),
+    "segundo_aht_pct": ("2º maior (%)", "ex: 37.3"),
+    "menor_ns_hora": ("Intervalo (hora)", "ex: 10h"),
+    "menor_ns_pct": ("Nível de serviço (%)", "ex: 15.1"),
+}
+
+GRUPOS_JUST = (
+    ("Volume", ("desvio_vol", "intervalos_vol", "maior_vol_hora", "maior_vol_pct",
+                "segundo_vol_hora", "segundo_vol_pct")),
+    ("AHT", ("desvio_aht", "intervalos_aht", "maior_aht_hora", "maior_aht_pct",
+             "segundo_aht_hora", "segundo_aht_pct")),
+    ("Menor nível de serviço", ("menor_ns_hora", "menor_ns_pct")),
+)
+
+
+def _template_just(tipo, sla):
+    pref = "voz" if tipo == "justificativa_voz" else "chat_sac"
+    return TEMPLATES[f"{pref}_{'ok' if sla == 'ok' else 'abaixo'}"]
+
+
+def _campos_template(tpl):
+    return {f for _, f, _, _ in string.Formatter().parse(tpl) if f}
+
+
+def _texto_para_html(texto):
+    html = texto.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    html = html.replace("\n\n", "</p><p>").replace("\n", "<br>")
+    return (
+        '<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#333;">'
+        f'<p>{html}</p></div>'
+    )
+
+
+def _show_verificar(self, nome_op, idx=0):
+    d = OPERACOES[nome_op]
+    cor = d["cor"]
+    vs = d["verificacoes_email"]
+    B = self._pagina("Verificar e-mail", f"{nome_op}: {d['descricao']}",
+                     f"op:{nome_op}", nome_op,
+                     (nome_op, lambda: self.show_operacao(nome_op)))
+
+    corpo = tk.Frame(B, bg=C.INK)
+    corpo.pack(fill="x", padx=28, pady=(18, 36))
+    corpo.grid_columnconfigure(1, weight=1)
+    esq = tk.Frame(corpo, bg=C.INK, width=280)
+    esq.grid(row=0, column=0, sticky="nw", padx=(0, 18))
+    dir_ = tk.Frame(corpo, bg=C.INK)
+    dir_.grid(row=0, column=1, sticky="nsew")
+    sel = {"i": idx}
+
+    def render_lista():
+        for w in esq.winfo_children():
+            w.destroy()
+        tk.Label(esq, text="Verificações", font=fnt(9), bg=C.INK,
+                 fg=C.MUTED, anchor="w").pack(fill="x", pady=(0, 6))
+        hoje = hist_periodo(1, nome_op)
+        for i, v in enumerate(vs):
+            ativo = i == sel["i"]
+            bg = C.SURFACE if ativo else C.INK
+            r = tk.Frame(esq, bg=bg, width=280)
+            r.pack(fill="x", pady=1)
+            tk.Frame(r, bg=cor if ativo else bg, width=3).pack(side="left", fill="y")
+            tx = tk.Frame(r, bg=bg, padx=14, pady=9)
+            tx.pack(side="left", fill="x", expand=True)
+            tk.Label(tx, text=v["nome"],
+                     font=fnt(10, "bold" if ativo else "normal"),
+                     bg=bg, fg=C.TEXT, anchor="w", width=28).pack(anchor="w")
+            regs = [(dt, x) for dt, x in hoje
+                    if x.get("tipo") == "verificar_email"
+                    and x.get("descricao") == v["nome"]]
+            if regs:
+                rtxt = f"{rotulo_status(regs[0][1])} às {regs[0][0]:%H:%M}"
+                if len(regs) > 1:
+                    rtxt += f"   ({len(regs)} hoje)"
+                tk.Label(tx, text=rtxt, font=fnt(8), bg=bg,
+                         fg=TOM[hist_tom(regs[0][1])], anchor="w").pack(anchor="w")
+            else:
+                tk.Label(tx, text="pendente hoje", font=fnt(8), bg=bg,
+                         fg=C.MUTED, anchor="w").pack(anchor="w")
+            if not ativo:
+                clicavel(r, lambda k=i: selecionar(k), C.INK, C.SURFACE)
+
+    def selecionar(i):
+        sel["i"] = i
+        render_lista()
+        render_detalhe()
+        self.body.canvas.yview_moveto(0)
+
+    def render_detalhe():
+        for w in dir_.winfo_children():
+            w.destroy()
+        vf = vs[sel["i"]]
+        tipo = vf.get("tipo", "")
+
+        # ── CABEÇALHO ──
+        topo = tk.Frame(dir_, bg=C.SURFACE, padx=24, pady=18)
+        topo.pack(fill="x")
+        tk.Label(topo, text=vf["nome"], font=fnt(15, "bold"),
+                 bg=C.SURFACE, fg=C.TEXT, anchor="w").pack(fill="x")
+        tk.Label(topo, text=vf["descricao"], font=fnt(9),
+                 bg=C.SURFACE, fg=C.TEXT2, anchor="w").pack(fill="x", pady=(2, 12))
+        meta = tk.Frame(topo, bg=C.SURFACE)
+        meta.pack(fill="x")
+        for i, (rot, val) in enumerate((("Remetente", vf["remetente"]),
+                                         ("Assunto", vf["assunto_referencia"]))):
+            tk.Label(meta, text=rot, font=fnt(9), bg=C.SURFACE, fg=C.MUTED,
+                     anchor="w", width=11).grid(row=i, column=0, sticky="w", pady=2)
+            tk.Label(meta, text=val, font=fnt(10), bg=C.SURFACE, fg=C.TEXT,
+                     anchor="w").grid(row=i, column=1, sticky="w")
+
+        def copiar_assunto():
+            self.root.clipboard_clear()
+            self.root.clipboard_append(vf["assunto_referencia"])
+            self.toast.show("Assunto copiado",
+                            "Cole na busca do Outlook para achar o e-mail.")
+
+        Btn(meta, "Copiar assunto", copiar_assunto, kind="ghost",
+            size=8, padx=10, pady=3).grid(row=1, column=2, padx=(14, 0))
+
+        # ── PLANILHA DE APOIO (Parcial Logados) ──
+        if "arquivo_ref" in vf:
+            ref = vf["arquivo_ref"]
+            agora = datetime.now()
+            ini, _ = intervalo(agora, ref["intervalo_min"])
+            ant_ini = ini - timedelta(minutes=ref["intervalo_min"])
+            pr = tk.Frame(dir_, bg=C.SURFACE, padx=24, pady=16)
+            pr.pack(fill="x", pady=(10, 0))
+            cab_pr = tk.Frame(pr, bg=C.SURFACE)
+            cab_pr.pack(fill="x", pady=(0, 8))
+            tk.Label(cab_pr, text="Planilha de apoio", font=fnt(11, "bold"),
+                     bg=C.SURFACE, fg=C.TEXT).pack(side="left")
+
+            def abrir_plan():
+                abre = getattr(os, "startfile", None)
+                if abre and os.path.exists(ref["caminho"]):
+                    abre(ref["caminho"])
+                    self.toast.show("Abrindo a planilha",
+                                    os.path.basename(ref["caminho"]))
+                else:
+                    self.toast.show("Planilha não encontrada",
+                                    ref["caminho"], "err")
+
+            Btn(cab_pr, "Abrir planilha", abrir_plan, kind="ghost",
+                size=9, pady=4).pack(side="right")
+            g = tk.Frame(pr, bg=C.SURFACE)
+            g.pack(fill="x")
+            linhas_info = [
+                ("Arquivo", os.path.basename(ref["caminho"])),
+                ("Colar em", f"aba {ref['sheet_cola']}, célula A2"),
+                ("Copiar de", f"aba {ref['sheet_copia']}"),
+                ("Copiar até", f"{ant_ini:%H:%M} – {ini:%H:%M}  (intervalo anterior)"),
+            ]
+            if ref.get("cms_filtro"):
+                linhas_info.append(("Filtro CMS", ref["cms_filtro"]))
+            if ref.get("cms_relatorio"):
+                linhas_info.append(("Relatório CMS", ref["cms_relatorio"]))
+            for i, (rot, val) in enumerate(linhas_info):
+                destaque = rot == "Copiar até"
+                tk.Label(g, text=rot, font=fnt(9), bg=C.SURFACE, fg=C.MUTED,
+                         anchor="w", width=13).grid(row=i, column=0, sticky="w", pady=1)
+                tk.Label(g, text=val,
+                         font=fnt(10, "bold" if destaque else "normal",
+                                  num=destaque),
+                         bg=C.SURFACE,
+                         fg=cor if destaque else C.TEXT,
+                         anchor="w").grid(row=i, column=1, sticky="w")
+            
+            # ── Botão preparar e-mail com tabelas ──
+            if tipo == "parcial_logados":
+                tk.Frame(pr, bg=C.LINE, height=1).pack(fill="x", pady=(14, 10))
+
+                tk.Label(pr, text="Enviar Parcial de Logados",
+                         font=fnt(11, "bold"), bg=C.SURFACE, fg=C.TEXT,
+                         anchor="w").pack(fill="x")
+                tk.Label(pr, text="Lê as tabelas do RESUMO até o intervalo anterior e abre o rascunho no Outlook.",
+                         font=fnt(9), bg=C.SURFACE, fg=C.TEXT2,
+                         anchor="w").pack(fill="x", pady=(2, 10))
+
+                def preparar_email_logados():
+                    # Ler tabelas do RESUMO
+                    ok, resultado = ler_resumo_cardif(
+                        ref["caminho"], ref["sheet_copia"], ref["intervalo_min"])
+
+                    if not ok:
+                        self.toast.show("Erro ao ler RESUMO", resultado, "err")
+                        return
+
+                    corpo_html = resultado
+
+                    if not OUTLOOK_OK:
+                        # Sem Outlook: copia HTML para clipboard
+                        self.root.clipboard_clear()
+                        self.root.clipboard_append(corpo_html)
+                        self.toast.show("Tabelas copiadas",
+                                        "Outlook não disponível. Cole manualmente no e-mail.", "warn")
+                        return
+
+                    # Abrir rascunho no Outlook
+                    ok_ol, msg_ol = preparar_outlook(
+                        assunto=vf["assunto_referencia"],
+                        corpo_html=corpo_html,
+                        responder_a=vf["assunto_referencia"])
+
+                    if ok_ol:
+                        self.toast.show("Rascunho aberto no Outlook",
+                                        "Revise as tabelas e envie manualmente.")
+                    else:
+                        self.toast.show("Erro ao abrir Outlook", msg_ol, "err")
+
+                btns_logados = tk.Frame(pr, bg=C.SURFACE)
+                btns_logados.pack(fill="x")
+
+                Btn(btns_logados, "📧  Preparar e-mail no Outlook",
+                    command=preparar_email_logados,
+                    kind="primary", size=10, padx=16, pady=8).pack(side="left")
+
+                tk.Label(pr,
+                         text="O e-mail será aberto como rascunho para você revisar antes de enviar.",
+                         font=fnt(8), bg=C.SURFACE, fg=C.MUTED,
+                         anchor="w").pack(fill="x", pady=(8, 0))             
+
+        # ── CHECKLIST ──
+        ck = tk.Frame(dir_, bg=C.SURFACE, padx=8, pady=16)
+        ck.pack(fill="x", pady=(10, 0))
+        cab_ck = tk.Frame(ck, bg=C.SURFACE, padx=16)
+        cab_ck.pack(fill="x")
+        tk.Label(cab_ck, text="Checklist", font=fnt(11, "bold"),
+                 bg=C.SURFACE, fg=C.TEXT).pack(side="left")
+        contador = tk.Label(cab_ck, font=fnt(10, "bold", num=True),
+                            bg=C.SURFACE, fg=C.TEXT2)
+        contador.pack(side="right")
+        barra_ck = Barra(ck, 5)
+        barra_ck.pack(fill="x", padx=16, pady=(10, 8))
+        checks = []
+        for item in vf["checklist"]:
+            sub = item.lstrip().startswith("└")
+            texto_item = item.strip().lstrip("└").strip()
+            chk_row = CheckRow(ck, texto_item,
+                               on_change=lambda: atualizar_checks(),
+                               nivel=1 if sub else 0)
+            chk_row.pack(fill="x")
+            checks.append(chk_row)
+
+        # ════════════════════════════════════════════════════
+        # GERADOR DE JUSTIFICATIVA (VOZ / CHAT)
+        # ════════════════════════════════════════════════════
+        prev_holder = {"n": 0, "texto": ""}
+
+        if tipo in ("justificativa_voz", "justificativa_chat"):
+
+            jf = tk.Frame(dir_, bg=C.SURFACE, padx=24, pady=18)
+            jf.pack(fill="x", pady=(10, 0))
+
+            # Título + SLA toggle
+            cab_jf = tk.Frame(jf, bg=C.SURFACE)
+            cab_jf.pack(fill="x")
+            tk.Label(cab_jf, text="Gerador de Justificativa",
+                     font=fnt(11, "bold"), bg=C.SURFACE, fg=C.TEXT).pack(side="left")
+            sla_seg = Segmented(
+                cab_jf,
+                [("SLA abaixo de 80%", "abaixo"), ("SLA 80% ou mais", "ok")],
+                "abaixo",
+                lambda v: render_campos(),
+                {"abaixo": C.WARN, "ok": C.OK})
+            sla_seg.pack(side="right")
+
+            tk.Label(jf,
+                     text="Preencha os números do e-mail. O texto é montado enquanto você digita.",
+                     font=fnt(9), bg=C.SURFACE, fg=C.TEXT2,
+                     anchor="w").pack(fill="x", pady=(4, 6))
+
+
+            val_box = tk.Frame(jf, bg=C.SURFACE)
+            val_box.pack(fill="x", pady=(0, 6))
+            lbl_val = tk.Label(val_box, font=fnt(8), bg=C.SURFACE, fg=C.MUTED,
+                               anchor="w", justify="left", wraplength=560)
+
+            def validar_pelo_email():
+                ok_mail, dados_mail = ler_corpo_email_outlook(
+                    vf["assunto_referencia"], vf.get("remetente"))
+                if not ok_mail:
+                    self.toast.show("Não li o e-mail", dados_mail, "err")
+                    return
+                ok_ext, info = extrair_sla_pontual(dados_mail["html"], tipo)
+                if not ok_ext:
+                    self.toast.show("Não extraí o SLA", info, "err")
+                    return
+                if info.get("abaixo") is not None:
+                    sla_seg.set("abaixo" if info["abaixo"] else "ok", notify=True)
+                if info.get("desvio_vol") is not None and "desvio_vol" in campos:
+                    preencher_campo(campos["desvio_vol"], _fmt_pct(info["desvio_vol"]))
+                    atualizar_previa()
+                lbl_val.pack(fill="x", pady=(6, 0))
+                lbl_val.configure(text=info["resumo"],
+                                  fg=C.OK if info.get("abaixo") is False else C.WARN)
+                self.toast.show("E-mail validado", info["resumo_curto"])
+
+            Btn(val_box, "Validar com o e-mail (Outlook)",
+                command=validar_pelo_email if OUTLOOK_OK else None,
+                kind="ghost", size=9, pady=5, enabled=OUTLOOK_OK).pack(side="left")
+        
+            # Campos dinâmicos
+            campos_box = tk.Frame(jf, bg=C.SURFACE)
+            campos_box.pack(fill="x")
+            grupos = {}
+            campos = {}
+            for gnome, chaves in GRUPOS_JUST:
+                gf = tk.Frame(campos_box, bg=C.SURFACE)
+                tk.Label(gf, text=gnome, font=fnt(9, "bold"),
+                         bg=C.SURFACE, fg=cor, anchor="w").grid(
+                    row=0, column=0, columnspan=3, sticky="w", pady=(10, 4))
+                for cc in range(3):
+                    gf.grid_columnconfigure(cc, weight=1, uniform=f"g{gnome}")
+                celulas = {}
+                for k in chaves:
+                    cel = tk.Frame(gf, bg=C.SURFACE)
+                    tk.Label(cel, text=CAMPOS_JUST[k][0], font=fnt(8),
+                             bg=C.SURFACE, fg=C.TEXT2, anchor="w").pack(fill="x")
+                    cp = Campo(cel, CAMPOS_JUST[k][1],
+                               on_change=lambda: atualizar_previa(), width=12)
+                    cp.pack(fill="x", pady=(2, 0))
+                    campos[k] = cp
+                    celulas[k] = cel
+                grupos[gnome] = (gf, chaves, celulas)
+
+            # Prévia
+            pcab = tk.Frame(jf, bg=C.SURFACE)
+            pcab.pack(fill="x", pady=(18, 6))
+            tk.Label(pcab, text="Prévia", font=fnt(9, "bold"),
+                     bg=C.SURFACE, fg=C.TEXT).pack(side="left")
+            lbl_falta = tk.Label(pcab, font=fnt(9), bg=C.SURFACE)
+            lbl_falta.pack(side="right")
+
+            txt_prev = tk.Text(jf, font=fnt(10), bg=C.INK, fg=C.TEXT,
+                               height=9, bd=0, padx=16, pady=14, wrap="word",
+                               highlightthickness=1, highlightbackground=C.LINE,
+                               spacing2=2, spacing3=4)
+            txt_prev.pack(fill="x")
+            txt_prev.tag_configure("falta", foreground=C.WARN,
+                                   background="#2E2717")
+
+            def render_campos():
+                tpl = _template_just(tipo, sla_seg.valor)
+                usados = _campos_template(tpl)
+                for gnome, (gf, chaves, celulas) in grupos.items():
+                    for cel in celulas.values():
+                        cel.grid_forget()
+                    vis = [k for k in chaves if k in usados]
+                    if not vis:
+                        gf.pack_forget()
+                        continue
+                    gf.pack(fill="x")
+                    for n, k in enumerate(vis):
+                        celulas[k].grid(row=1 + n // 3, column=n % 3,
+                                        sticky="ew", padx=(0, 12), pady=(0, 8))
+                atualizar_previa()
+
+            def atualizar_previa():
+                tpl = _template_just(tipo, sla_seg.valor)
+                txt_prev.configure(state="normal")
+                txt_prev.delete("1.0", "end")
+                faltam = 0
+                texto_limpo = ""
+                for literal, campo, _, _ in string.Formatter().parse(tpl):
+                    txt_prev.insert("end", literal)
+                    texto_limpo += literal
+                    if campo:
+                        v = campos[campo].valor()
+                        if v:
+                            txt_prev.insert("end", v)
+                            texto_limpo += v
+                        else:
+                            faltam += 1
+                            marca = f"[{CAMPOS_JUST[campo][0].split(' (')[0].lower()}]"
+                            txt_prev.insert("end", marca, "falta")
+                            texto_limpo += marca
+                txt_prev.configure(state="disabled")
+                prev_holder["n"] = faltam
+                prev_holder["texto"] = texto_limpo
+                if faltam:
+                    lbl_falta.configure(
+                        text=f"{faltam} {'campo' if faltam == 1 else 'campos'} em aberto",
+                        fg=C.WARN)
+                else:
+                    lbl_falta.configure(text="Pronta para copiar", fg=C.OK)
+
+            # ── BOTÃO COPIAR ──
+            def copiar_just():
+                self.root.clipboard_clear()
+                self.root.clipboard_append(txt_prev.get("1.0", "end").strip())
+                if prev_holder["n"]:
+                    self.toast.show("Copiada com campos em aberto",
+                                    f"Faltam {prev_holder['n']} campo(s).", "warn")
+                else:
+                    self.toast.show("Justificativa copiada",
+                                    "Responda a todos sem histórico e cole no e-mail.")
+
+            Btn(jf, "Copiar justificativa", copiar_just,
+                kind="primary").pack(anchor="w", pady=(12, 0))
+
+            # ════════════════════════════════════════════════
+            # ENVIO PELO OUTLOOK
+            # ════════════════════════════════════════════════
+            envio = tk.Frame(jf, bg=C.SURFACE)
+            envio.pack(fill="x", pady=(20, 0))
+            tk.Frame(envio, bg=C.LINE, height=1).pack(fill="x", pady=(0, 14))
+
+            tk.Label(envio, text="Envio pelo Outlook", font=fnt(11, "bold"),
+                     bg=C.SURFACE, fg=C.TEXT, anchor="w").pack(fill="x")
+            tk.Label(envio,
+                     text="Responde a todos no e-mail mais recente com o assunto acima, sem histórico.",
+                     font=fnt(9), bg=C.SURFACE, fg=C.TEXT2,
+                     anchor="w").pack(fill="x", pady=(2, 10))
+
+            lbl_outlook = tk.Label(envio, font=fnt(8), bg=C.SURFACE, anchor="w")
+            lbl_outlook.pack(fill="x")
+            if OUTLOOK_OK:
+                lbl_outlook.configure(text="✅ Outlook disponível", fg=C.OK)
+            else:
+                lbl_outlook.configure(
+                    text="❌ pywin32 não instalado — use Copiar justificativa",
+                    fg=C.ERR)
+
+            btns_ol = tk.Frame(envio, bg=C.SURFACE)
+            btns_ol.pack(fill="x", pady=(10, 0))
+
+            def ol_manual():
+                texto_final = txt_prev.get("1.0", "end").strip()
+                if prev_holder["n"]:
+                    if not messagebox.askyesno(
+                            "Campos em aberto",
+                            f"Ainda há {prev_holder['n']} campo(s) em aberto.\n"
+                            "Deseja abrir o e-mail mesmo assim?",
+                            icon="warning", parent=self.root):
+                        return
+                corpo_html = _texto_para_html(texto_final)
+                ok, msg = preparar_outlook(
+                    assunto=vf["assunto_referencia"],
+                    corpo_html=corpo_html,
+                    responder_a=vf["assunto_referencia"])
+                if ok:
+                    self.toast.show("E-mail aberto no Outlook",
+                                    "Revise e clique em Enviar manualmente.")
+                else:
+                    self.toast.show("Erro ao abrir Outlook", msg, "err")
+
+            def ol_auto():
+                texto_final = txt_prev.get("1.0", "end").strip()
+                if prev_holder["n"]:
+                    self.toast.show("Campos em aberto",
+                                    "Preencha todos os campos antes.", "warn")
+                    return
+                if not messagebox.askyesno(
+                        "Enviar automaticamente?",
+                        f"O e-mail será respondido a todos.\n\n"
+                        f"Assunto: {vf['assunto_referencia']}\n\nConfirma?",
+                        icon="warning", parent=self.root):
+                    return
+                corpo_html = _texto_para_html(texto_final)
+                ok, msg = enviar_outlook(
+                    assunto=vf["assunto_referencia"],
+                    corpo_html=corpo_html,
+                    responder_a=vf["assunto_referencia"])
+                if ok:
+                    self.toast.show("E-mail enviado",
+                                    "Justificativa enviada pelo Outlook.")
+                    save_hist({
+                        "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                        "tipo": "verificar_email", "operacao": nome_op,
+                        "descricao": f"{vf['nome']} (envio automático)",
+                        "resultado": "ok",
+                        "observacoes": "Enviado automaticamente",
+                        "status": "Verificado — OK"})
+                    render_lista()
+                    self.atualizar_contexto()
+                else:
+                    self.toast.show("Falha no envio", msg, "err")
+
+            Btn(btns_ol, "📧  Verificar no Outlook",
+                command=ol_manual if OUTLOOK_OK else None,
+                kind="ghost", size=10, padx=16, pady=8,
+                enabled=OUTLOOK_OK).pack(side="left", padx=(0, 10))
+
+            Btn(btns_ol, "⚡  Enviar Automático",
+                command=ol_auto if OUTLOOK_OK else None,
+                kind="primary", size=10, padx=16, pady=8,
+                enabled=OUTLOOK_OK).pack(side="left")
+
+            tk.Label(envio,
+                     text="Verificar: abre para revisão.  Automático: envia direto sem abrir.",
+                     font=fnt(8), bg=C.SURFACE, fg=C.MUTED,
+                     anchor="w").pack(fill="x", pady=(8, 0))
+
+            # Inicializar campos
+            render_campos()
+
+        # ════════════════════════════════════════════════════
+        # REGISTRAR VERIFICAÇÃO
+        # ════════════════════════════════════════════════════
+        rg = tk.Frame(dir_, bg=C.SURFACE, padx=24, pady=18)
+        rg.pack(fill="x", pady=(10, 0))
+        tk.Label(rg, text="Registrar", font=fnt(11, "bold"),
+                 bg=C.SURFACE, fg=C.TEXT, anchor="w").pack(fill="x")
+        tk.Label(rg, text="Observações (opcional)", font=fnt(8),
+                 bg=C.SURFACE, fg=C.TEXT2, anchor="w").pack(fill="x", pady=(10, 2))
+        obs = tk.Text(rg, font=fnt(10), bg=C.INK, fg=C.TEXT,
+                      insertbackground=C.TEXT, height=3, bd=0, padx=12, pady=8,
+                      highlightthickness=1, highlightbackground=C.LINE,
+                      highlightcolor=C.ACCENT)
+        obs.pack(fill="x")
+        linha = tk.Frame(rg, bg=C.SURFACE)
+        linha.pack(fill="x", pady=(14, 0))
+        tk.Label(linha, text="Resultado", font=fnt(9),
+                 bg=C.SURFACE, fg=C.TEXT2).pack(side="left", padx=(0, 10))
+        res = Segmented(linha,
+                        [("OK", "ok"), ("Com ressalva", "ressalva"),
+                         ("Problema", "erro")],
+                        "ok",
+                        cores={"ok": C.OK, "ressalva": C.WARN, "erro": C.ERR})
+        res.pack(side="left")
+        btn_reg = Btn(linha, "", kind="primary", size=11,
+                      padx=22, pady=9, enabled=False)
+        btn_reg.pack(side="right")
+
+        def atualizar_checks():
+            feitos = sum(1 for c in checks if c.valor)
+            total = len(checks)
+            contador.configure(text=f"{feitos} de {total}",
+                               fg=C.OK if feitos == total else C.TEXT2)
+            barra_ck.set(feitos / total if total else 1,
+                         C.OK if feitos == total else cor)
+            if btn_reg.kind == "ok":
+                return
+            if feitos == total:
+                btn_reg.set(text="Registrar verificação",
+                            enabled=True, command=registrar)
+            else:
+                btn_reg.set(
+                    text=f"Complete o checklist  ({feitos} de {total})",
+                    enabled=False)
+
+        def registrar():
+            resultado = res.valor
+            texto_obs = obs.get("1.0", "end").strip()
+            status_map = {
+                "ok": "Verificado — OK",
+                "ressalva": "Verificado — Com ressalva",
+                "erro": "Verificado — Problema"}
+            save_hist({
+                "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                "tipo": "verificar_email", "operacao": nome_op,
+                "descricao": vf["nome"], "resultado": resultado,
+                "observacoes": texto_obs,
+                "status": status_map[resultado]})
+            tom = {"ok": "ok", "ressalva": "warn", "erro": "err"}[resultado]
+            self.toast.show("Verificação registrada",
+                            f"{vf['nome']}: {status_map[resultado].split('— ')[1]}",
+                            tom)
+            btn_reg.set(text=f"Registrada às {datetime.now():%H:%M}",
+                        kind="ok", enabled=True, command=None)
+            Btn(linha, "Nova verificação", render_detalhe,
+                kind="ghost", size=10, pady=9).pack(side="right", padx=(0, 10))
+            render_lista()
+            self.atualizar_contexto()
+
+        atualizar_checks()
+
+    render_lista()
+    render_detalhe()
+
+
+WFMApp.show_verificar = _show_verificar
+
+
+# ── Célula 21 (markdown) ────────────────────────────────────────────────
+# #### ============================================================
+# #### CÉLULA 3 — EXECUTAR APLICAÇÃO
+# #### ============================================================
+
+# ── Célula 22 (código) ──────────────────────────────────────────────────
+
+app = WFMApp()
+app.run()
+
+
+# ── Célula 23 (markdown) ────────────────────────────────────────────────
+# #### ============================================================
+# #### CÉLULA 4 — UTILIDADES
+# #### ============================================================
+
+# ── Célula 24 (código) ──────────────────────────────────────────────────
+
+def ver_historico():
+    h = load_hist()
+    if not h:
+        print("📋 Vazio.")
+        return
+    print(f"📋 {len(h)} registro(s)\n")
+    for r in h:
+        t = "📁" if r.get("tipo") == "alocar" else "📧"
+        print(f"  {t} [{r.get('data','')}] {r.get('operacao','')}"
+              f" / {r.get('descricao','')} — {r.get('status','')}")
+
+def limpar_historico():
+    with open(HISTORICO_FILE, "w") as f:
+        json.dump([], f)
+    print("✅ Limpo!")
+
+def verificar_pastas():
+    for n, d in OPERACOES.items():
+        print(f"\n{d['icone']} {n}:")
+        for nb, db in d["bases"].items():
+            e = os.path.exists(db["destino"])
+            print(f"  {'✅' if e else '❌'} {nb}: {db['destino']}")
+
+# Descomente:
+# ver_historico()
+# limpar_historico()
+# verificar_pastas()
+
